@@ -89,6 +89,16 @@ fn ancestor_resolved_size(b: *Box, comptime axis: Axis) f32 {
             const insets = border_insets(ancestor);
             return @max(ancestor.fixed_size[ax] - insets.before[ax] - insets.after[ax], 0);
         }
+        // A children_sum ancestor's size is defined by its children, so
+        // resolving against it (or any ancestor above it) creates a
+        // circular dependency that inflates the children_sum container.
+        // Return 0 and let the position pass fill cross-axis children
+        // to the available space once children_sum is known.
+        // Note: raddebugger walks past children_sum here, but their
+        // position pass has no "fill to available" cross-axis logic,
+        // so they don't use parent_pct for cross-axis fill in
+        // children_sum containers the way we do.
+        if (kind == .children_sum) return 0;
         p = ancestor.parent;
     }
     return 0;
@@ -152,11 +162,35 @@ fn constrain_subtree(parent: *Box, comptime axis: Axis) void {
     const ax = @intFromEnum(axis);
     const insets = border_insets(parent);
     const avail = @max(parent.fixed_size[ax] - insets.before[ax] - insets.after[ax], 0);
+    const allow_overflow = if (axis == .x) parent.flags.allow_overflow_x else parent.flags.allow_overflow_y;
 
-    if (axis == parent.child_layout_axis) {
-        constrain_layout_axis(parent, axis, avail);
-    } else {
-        constrain_cross_axis(parent, axis, avail);
+    if (!allow_overflow) {
+        if (axis == parent.child_layout_axis) {
+            constrain_layout_axis(parent, axis, avail);
+        } else {
+            constrain_cross_axis(parent, axis, avail);
+        }
+    }
+
+    // When a parent allows overflow, its size is now finalized —
+    // re-resolve ParentPct children against it.
+    if (allow_overflow) {
+        var child = parent.first;
+        while (child) |c| {
+            if (c.pref_size[ax].kind == .parent_pct) {
+                c.fixed_size[ax] = avail * c.pref_size[ax].value;
+            }
+            child = c.next;
+        }
+    }
+
+    // Enforce min_size.
+    {
+        var child = parent.first;
+        while (child) |c| {
+            c.fixed_size[ax] = @max(c.fixed_size[ax], c.min_size[ax]);
+            child = c.next;
+        }
     }
 
     var child = parent.first;
@@ -169,33 +203,27 @@ fn constrain_subtree(parent: *Box, comptime axis: Axis) void {
 fn constrain_layout_axis(parent: *Box, comptime axis: Axis, avail: f32) void {
     const ax = @intFromEnum(axis);
     var total: f32 = 0;
-    var shrinkable_total: f32 = 0;
+    var total_weighted: f32 = 0;
 
     var child = parent.first;
     while (child) |c| {
         if (!is_floating(c, axis)) {
             total += c.fixed_size[ax];
-            if (c.pref_size[ax].strictness < 1.0) {
-                shrinkable_total += c.fixed_size[ax];
-            }
+            total_weighted += c.fixed_size[ax] * (1.0 - c.pref_size[ax].strictness);
         }
         child = c.next;
     }
 
-    const overflow = total - avail;
-    if (overflow <= 0 or shrinkable_total <= 0) return;
+    const violation = total - avail;
+    if (violation <= 0 or total_weighted <= 0) return;
 
-    const reduction = @min(overflow, shrinkable_total);
+    const fixup_pct = @min(violation / total_weighted, 1.0);
 
     child = parent.first;
     while (child) |c| {
-        if (!is_floating(c, axis) and c.pref_size[ax].strictness < 1.0) {
-            const weight = (1.0 - c.pref_size[ax].strictness);
-            const share = if (shrinkable_total > 0)
-                reduction * (c.fixed_size[ax] / shrinkable_total) * weight
-            else
-                0;
-            c.fixed_size[ax] = @max(c.fixed_size[ax] - share, 0);
+        if (!is_floating(c, axis)) {
+            const fixup = @max(c.fixed_size[ax] * (1.0 - c.pref_size[ax].strictness), 0);
+            c.fixed_size[ax] -= fixup * fixup_pct;
         }
         child = c.next;
     }
@@ -203,11 +231,10 @@ fn constrain_layout_axis(parent: *Box, comptime axis: Axis, avail: f32) void {
 
 fn constrain_cross_axis(parent: *Box, comptime axis: Axis, avail: f32) void {
     const ax = @intFromEnum(axis);
-    const allow_overflow = if (axis == .x) parent.flags.allow_overflow_x else parent.flags.allow_overflow_y;
 
     var child = parent.first;
     while (child) |c| {
-        if (!is_floating(c, axis) and !allow_overflow) {
+        if (!is_floating(c, axis)) {
             c.fixed_size[ax] = @min(c.fixed_size[ax], avail);
         }
         child = c.next;
@@ -546,4 +573,48 @@ test "text_content sizing" {
     // "Hello" = 5 chars + 1 padding * 2 = 7
     try testing.expectEqual(@as(u16, 7), label.rect.w);
     try testing.expectEqual(@as(u16, 1), label.rect.h);
+}
+
+test "parent_pct child inside children_sum row fills sibling height" {
+    var arena = try Arena.init(.{});
+    defer arena.deinit();
+
+    // Simulates the counter-row pattern from basic_ui:
+    //   root (cells 80x24, axis .y)
+    //     panel (pct(1) x children(1), axis .y)
+    //       row (pct(1) x children(1), axis .x)
+    //         label  (text x pct(1,0))   <-- should fill row height, NOT root height
+    //         button (cells 7x3)
+
+    const root = try make_box(&arena);
+    root.pref_size = .{ Size.cells(80, 1), Size.cells(24, 1) };
+    root.child_layout_axis = .y;
+
+    const panel = try make_box(&arena);
+    panel.pref_size = .{ Size.pct(1, 1), Size.children(1) };
+    panel.child_layout_axis = .y;
+    link(root, panel);
+
+    const row = try make_box(&arena);
+    row.pref_size = .{ Size.pct(1, 1), Size.children(1) };
+    row.child_layout_axis = .x;
+    link(panel, row);
+
+    const label = try make_box(&arena);
+    label.display_string = "Apples:";
+    label.pref_size = .{ Size.text(0, 1), Size.pct(1, 0) };
+    link(row, label);
+
+    const button = try make_box(&arena);
+    button.pref_size = .{ Size.cells(7, 1), Size.cells(3, 1) };
+    link(row, button);
+
+    layout(root, 80, 24);
+
+    // Row height comes from the button (tallest fixed child = 3).
+    try testing.expectEqual(@as(u16, 3), row.rect.h);
+    // Panel wraps its single row child.
+    try testing.expectEqual(@as(u16, 3), panel.rect.h);
+    // Label should fill the row height (3), NOT the root height (24).
+    try testing.expectEqual(@as(u16, 3), label.rect.h);
 }
