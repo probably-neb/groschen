@@ -1,0 +1,4 @@
+- [ ] Make all rendering allocation infallible, i.e. make it panic for now with "OOM". If we're running out of memory while rendering, we're screwed anyway
+  - [ ] arena_print
+  - [ ] box + signal creation
+- [ ] store scroll state on box, eliminate need for separate scroll state in the scrollable widget. Scrollable widget should just use cached tree to determine scroll offset given element heights for virtualized list behavior

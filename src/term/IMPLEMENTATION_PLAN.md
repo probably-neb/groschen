@@ -671,7 +671,7 @@ end-to-end validation.
 
 ---
 
-## Phase 5: Frame Loop Integration
+## Phase 5: Frame Loop Integration ✅
 
 **Goal**: Wire everything together into a working frame loop.
 
@@ -731,7 +731,7 @@ a focusable region), navigate with Tab, click with Enter, verify focus cycling w
 
 ---
 
-## Phase 6: Widget Submodule
+## Phase 6: Widget Submodule ✅
 
 **Goal**: Build common widget helpers as a submodule within the `ui` module, layered on
 top of the core box-building API. These are thin wrappers — the application can always
@@ -774,7 +774,7 @@ bypass them and compose boxes directly.
 
 ---
 
-## Phase 7: Inline Signal Architecture
+## Phase 7: Inline Signal Architecture ✅
 
 **Goal**: Restructure event processing so `signal_from_box` can be called during the
 build phase, enabling the immediate-mode pattern where widget code constructs a box
@@ -895,11 +895,11 @@ Phase 3: Interaction ✅ ──────┤ (depends on 2, 1 for events)
                               │
 Phase 4: TUI Draw Layer ✅ ───┤ (depends on 1, 2, 3 for focus)
                               │
-Phase 5: Frame Loop ──────────┤ (depends on all above)
+Phase 5: Frame Loop ✅ ───────┤ (depends on all above)
                               │
-Phase 7: Inline Signals ──────┤ (depends on 5)
+Phase 7: Inline Signals ✅ ───┤ (depends on 5)
                               │
-Phase 6: Widget Submodule ────┘ (depends on 7)
+Phase 6: Widget Submodule ✅ ──┘ (depends on 7)
 ```
 
 Phases 3 and 4 were developed roughly in parallel. Phase 4 ended up depending on

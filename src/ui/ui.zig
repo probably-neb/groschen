@@ -248,6 +248,26 @@ pub const Signal = struct {
     flags: SignalFlags = .{},
     mouse_pos: [2]u16 = .{ 0, 0 },
     scroll: [2]i16 = .{ 0, 0 },
+
+    pub fn clicked(self: Signal) bool {
+        return self.flags.left_clicked or self.flags.keyboard_pressed;
+    }
+
+    pub fn pressed(self: Signal) bool {
+        return self.flags.left_pressed or self.flags.keyboard_pressed;
+    }
+
+    pub fn released(self: Signal) bool {
+        return self.flags.left_released;
+    }
+
+    pub fn hovering(self: Signal) bool {
+        return self.flags.hovering;
+    }
+
+    pub fn dragging(self: Signal) bool {
+        return self.flags.dragging;
+    }
 };
 
 pub const SignalFlags = packed struct {
@@ -553,15 +573,28 @@ pub fn get_build_arena() *Arena {
     return current_arena(&g);
 }
 
-/// Begin a new frame. Swaps the arena, resets stacks, bumps the build index,
-/// and creates a root box sized to the screen.
-pub fn begin_build(screen_w: u16, screen_h: u16, dt: f32) *Box {
+/// Begin a new frame. Checks for terminal resize, clears the back buffer,
+/// processes last frame's events, swaps arenas, and creates the root box.
+pub fn begin_build(t: *term.Term, dt: f32) !*Box {
+    _ = try t.check_resize();
+    t.clear();
+    return begin_build_raw(t.cols, t.rows, dt);
+}
+
+/// Low-level begin_build that takes explicit dimensions. Use `begin_build`
+/// with a terminal in application code; this variant exists for tests that
+/// don't have a terminal.
+pub fn begin_build_raw(screen_w: u16, screen_h: u16, dt: f32) *Box {
+    g.dt = dt;
+    if (g.root) |prev_root| {
+        interaction.process_events(prev_root);
+    }
+
     g.build_index += 1;
     g.arena_index ^= 1;
     g.arenas[g.arena_index].clear();
     g.stacks = init_stacks();
     g.screen_size = .{ screen_w, screen_h };
-    g.dt = dt;
     g.animating = false;
     g.active = true;
 
@@ -893,6 +926,26 @@ pub fn spacer(comptime axis: Axis, amount: f32) void {
     _ = build_box("", .{});
 }
 
+// ---------------------------------------------------------------------------
+// Signal Convenience Helpers
+// ---------------------------------------------------------------------------
+
+pub fn signal_from_box(box: *Box) Signal {
+    return interaction.signal_from_box(box);
+}
+
+pub fn clicked(sig: Signal) bool {
+    return sig.clicked();
+}
+
+pub fn pressed(sig: Signal) bool {
+    return sig.pressed();
+}
+
+pub fn released(sig: Signal) bool {
+    return sig.released();
+}
+
 pub fn arena_dupe(src: []const u8) ![]const u8 {
     const arena = current_arena(&g);
     return arena.dupe(u8, src);
@@ -998,7 +1051,7 @@ test "cross-frame persistence via begin_build/end_build" {
     defer deinit();
 
     // Frame 1: build a box with a known key
-    _ = begin_build(80, 24, 1.0 / 60.0);
+    _ = begin_build_raw(80, 24, 1.0 / 60.0);
     const b1 = build_box("persist_me##stable_key", .{ .draw_text = true });
     b1.hot_t = 0.75;
     b1.view_off = .{ 10, 20 };
@@ -1006,7 +1059,7 @@ test "cross-frame persistence via begin_build/end_build" {
     end_build();
 
     // Frame 2: build the same key — persistent fields should carry over
-    _ = begin_build(80, 24, 1.0 / 60.0);
+    _ = begin_build_raw(80, 24, 1.0 / 60.0);
     const b2 = build_box("persist_me##stable_key", .{ .draw_text = true });
     try std.testing.expect(b2.key.eql(key1));
     try std.testing.expectEqual(@as(f32, 0.75), b2.hot_t);
@@ -1020,13 +1073,13 @@ test "stale boxes are pruned from hash table" {
     defer deinit();
 
     // Frame 1: build a box
-    _ = begin_build(80, 24, 1.0 / 60.0);
+    _ = begin_build_raw(80, 24, 1.0 / 60.0);
     const b1 = build_box("ephemeral##gone", .{});
     const key = b1.key;
     end_build();
 
     // Frame 2: do NOT build that box
-    _ = begin_build(80, 24, 1.0 / 60.0);
+    _ = begin_build_raw(80, 24, 1.0 / 60.0);
     end_build();
 
     // The old box should have been pruned
@@ -1037,7 +1090,7 @@ test "begin_build creates root and end_build runs layout" {
     try init_all();
     defer deinit();
 
-    _ = begin_build(80, 24, 1.0 / 60.0);
+    _ = begin_build_raw(80, 24, 1.0 / 60.0);
 
     next_width(Size.cells(40, 1));
     next_height(Size.cells(5, 1));

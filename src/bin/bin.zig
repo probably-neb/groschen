@@ -3,7 +3,6 @@ const base = @import("base");
 const Arena = base.Arena;
 const term = @import("term");
 const ui = @import("ui");
-const Box = ui.Box;
 const BoxFlags = ui.BoxFlags;
 const Size = ui.Size;
 const Color = ui.Color;
@@ -61,18 +60,10 @@ const App = struct {
 };
 
 // ---------------------------------------------------------------------------
-// UI construction
+// UI construction with inline signals
 // ---------------------------------------------------------------------------
 
-const BuildResult = struct {
-    hello_button: *Box,
-    count_button: *Box,
-    reset_button: *Box,
-};
-
-fn build_ui(app: *const App) !BuildResult {
-    var result: BuildResult = undefined;
-
+fn build_ui(app: *App) !void {
     _ = ui.push_color(fg_color);
 
     // Title bar
@@ -122,11 +113,28 @@ fn build_ui(app: *const App) !BuildResult {
             _ = ui.push_parent_box("", .{});
 
             ui.spacer(.x, 2);
-            result.hello_button = build_button("Hello##hello_btn");
+
+            if (build_button("Hello##hello_btn").clicked()) {
+                app.message = "Hello from Groschen!";
+                app.message_color = success_color;
+            }
+
             ui.spacer(.x, 1);
-            result.count_button = build_button(try ui.arena_print("Clicked: {d}##count_btn", .{app.click_count}));
+
+            if (build_button(try ui.arena_print("Clicked: {d}##count_btn", .{app.click_count})).clicked()) {
+                app.click_count += 1;
+                app.message = "Button clicked!";
+                app.message_color = accent_color;
+            }
+
             ui.spacer(.x, 1);
-            result.reset_button = build_button("Reset##reset_btn");
+
+            if (build_button("Reset##reset_btn").clicked()) {
+                app.click_count = 0;
+                app.message = "Counter reset.";
+                app.message_color = warning_color;
+            }
+
             ui.spacer(.x, 2);
 
             ui.pop_parent();
@@ -159,44 +167,17 @@ fn build_ui(app: *const App) !BuildResult {
     }
 
     _ = ui.pop_color();
-
-    return result;
 }
 
-fn build_button(string: []const u8) *Box {
+fn build_button(string: []const u8) ui.Signal {
     ui.next_width(.text(2, 1));
     ui.next_height(.cells(3, 1));
     ui.next_bg(button_bg);
     ui.next_color(fg_color);
     ui.next_border_color(accent_color);
     ui.next_text_padding(1);
-    return ui.build_box(string, button_flags);
-}
-
-// ---------------------------------------------------------------------------
-// Signal handling
-// ---------------------------------------------------------------------------
-
-fn handle_signals(app: *App, br: *const BuildResult) void {
-    const hello_sig = interaction.signal_from_box(br.hello_button);
-    if (hello_sig.flags.left_clicked or hello_sig.flags.keyboard_pressed) {
-        app.message = "Hello from Groschen!";
-        app.message_color = success_color;
-    }
-
-    const count_sig = interaction.signal_from_box(br.count_button);
-    if (count_sig.flags.left_clicked or count_sig.flags.keyboard_pressed) {
-        app.click_count += 1;
-        app.message = "Button clicked!";
-        app.message_color = accent_color;
-    }
-
-    const reset_sig = interaction.signal_from_box(br.reset_button);
-    if (reset_sig.flags.left_clicked or reset_sig.flags.keyboard_pressed) {
-        app.click_count = 0;
-        app.message = "Counter reset.";
-        app.message_color = warning_color;
-    }
+    const box = ui.build_box(string, button_flags);
+    return interaction.signal_from_box(box);
 }
 
 // ---------------------------------------------------------------------------
@@ -265,21 +246,14 @@ pub fn main() !void {
             }
         }
 
-        // -- Build ----------------------------------------------------------
-        _ = try t.check_resize();
-        t.clear();
-
-        const root = ui.begin_build(t.cols, t.rows, dt);
+        // -- Build (check_resize, clear, process_events run inside begin_build)
+        const root = try ui.begin_build(&t, dt);
         root.flags.draw_background = true;
         root.bg_color = bg_color;
 
-        const br = try build_ui(&app);
+        try build_ui(&app);
 
         ui.end_build();
-
-        // -- Interaction ----------------------------------------------------
-        interaction.process_events(root);
-        handle_signals(&app, &br);
 
         // -- Draw -----------------------------------------------------------
         var grid = term.draw.Grid.from_term(&t);

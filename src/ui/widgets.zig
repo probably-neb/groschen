@@ -34,14 +34,11 @@ const button_flags: BoxFlags = .{
     .draw_active_effects = true,
 };
 
-pub fn button(string: []const u8) *Box {
+pub fn button(string: []const u8) Signal {
     ui.next_width(.text(2, 1));
     ui.next_height(.cells(3, 1));
     ui.next_text_padding(1);
-    return ui.build_box(string, button_flags);
-}
-
-pub fn button_signal(box: *Box) Signal {
+    const box = ui.build_box(string, button_flags);
     return interaction.signal_from_box(box);
 }
 
@@ -91,21 +88,20 @@ const line_edit_flags: BoxFlags = .{
     .draw_side_right = true,
 };
 
-pub fn line_edit(string: []const u8, state: *Line_Edit_State) *Box {
+pub fn line_edit(string: []const u8, edit_state: *Line_Edit_State) Signal {
     ui.next_height(.cells(3, 1));
     ui.next_text_padding(1);
 
     const container = ui.push_parent_box(string, line_edit_flags);
     container.child_layout_axis = .x;
 
-    const content = state.buffer[0..state.len];
-    const before = content[0..state.cursor];
-    const after = content[state.cursor..];
+    const content = edit_state.buffer[0..edit_state.len];
+    const before = content[0..edit_state.cursor];
+    const after = content[edit_state.cursor..];
 
     const is_focused = !container.key.is_zero() and
         interaction.get_focus_hot_key().eql(container.key);
 
-    // Text before cursor
     if (before.len > 0) {
         const before_str = ui.arena_dupe(before) catch "";
         ui.next_width(.text(0, 1));
@@ -113,10 +109,9 @@ pub fn line_edit(string: []const u8, state: *Line_Edit_State) *Box {
         _ = ui.build_box(before_str, .{ .draw_text = true, .focus_nav_skip = true });
     }
 
-    // Cursor indicator
     if (is_focused) {
-        const cursor_char: []const u8 = if (state.cursor < state.len)
-            ui.arena_dupe(content[state.cursor .. state.cursor + 1]) catch "▏"
+        const cursor_char: []const u8 = if (edit_state.cursor < edit_state.len)
+            ui.arena_dupe(content[edit_state.cursor .. edit_state.cursor + 1]) catch "▏"
         else
             "▏";
 
@@ -130,8 +125,7 @@ pub fn line_edit(string: []const u8, state: *Line_Edit_State) *Box {
             .focus_nav_skip = true,
         });
 
-        // Skip the character under the cursor for the "after" portion
-        const after_skip: []const u8 = if (state.cursor < state.len) after[1..] else after;
+        const after_skip: []const u8 = if (edit_state.cursor < edit_state.len) after[1..] else after;
         if (after_skip.len > 0) {
             const after_str = ui.arena_dupe(after_skip) catch "";
             ui.next_width(.text(0, 1));
@@ -147,50 +141,43 @@ pub fn line_edit(string: []const u8, state: *Line_Edit_State) *Box {
         }
     }
 
-    // Filler to make the container fill its width
     ui.next_width(.pct(1, 0));
     ui.next_height(.pct(1, 0));
     _ = ui.build_box("", .{ .focus_nav_skip = true });
 
     ui.pop_parent();
 
-    return container;
-}
+    const sig = interaction.signal_from_box(container);
 
-pub fn line_edit_handle_events(state: *Line_Edit_State, box: *Box) Signal {
-    const sig = interaction.signal_from_box(box);
+    if (is_focused) {
+        var ev = interaction.get_events().first;
+        while (ev) |event| : (ev = event.next) {
+            if (event.consumed) continue;
 
-    const is_focused = !box.key.is_zero() and
-        interaction.get_focus_hot_key().eql(box.key);
-    if (!is_focused) return sig;
-
-    var ev = interaction.get_events().first;
-    while (ev) |event| : (ev = event.next) {
-        if (event.consumed) continue;
-
-        switch (event.kind) {
-            .text => {
-                if (event.codepoint > 0 and event.codepoint < 0x10000) {
-                    var encode_buf: [4]u8 = undefined;
-                    const byte_len = std.unicode.utf8Encode(@intCast(event.codepoint), &encode_buf) catch continue;
-                    if (state.len + byte_len <= state.buffer.len) {
-                        std.mem.copyBackwards(
-                            u8,
-                            state.buffer[state.cursor + byte_len .. state.len + byte_len],
-                            state.buffer[state.cursor..state.len],
-                        );
-                        @memcpy(state.buffer[state.cursor .. state.cursor + byte_len], encode_buf[0..byte_len]);
-                        state.len += byte_len;
-                        state.cursor += byte_len;
-                        event.consumed = true;
+            switch (event.kind) {
+                .text => {
+                    if (event.codepoint > 0 and event.codepoint < 0x10000) {
+                        var encode_buf: [4]u8 = undefined;
+                        const byte_len = std.unicode.utf8Encode(@intCast(event.codepoint), &encode_buf) catch continue;
+                        if (edit_state.len + byte_len <= edit_state.buffer.len) {
+                            std.mem.copyBackwards(
+                                u8,
+                                edit_state.buffer[edit_state.cursor + byte_len .. edit_state.len + byte_len],
+                                edit_state.buffer[edit_state.cursor..edit_state.len],
+                            );
+                            @memcpy(edit_state.buffer[edit_state.cursor .. edit_state.cursor + byte_len], encode_buf[0..byte_len]);
+                            edit_state.len += byte_len;
+                            edit_state.cursor += byte_len;
+                            event.consumed = true;
+                        }
                     }
-                }
-            },
-            .key_press => {
-                const handled = handle_line_edit_key(state, event.key, event.mods);
-                if (handled) event.consumed = true;
-            },
-            else => {},
+                },
+                .key_press => {
+                    const handled = handle_line_edit_key(edit_state, event.key, event.mods);
+                    if (handled) event.consumed = true;
+                },
+                else => {},
+            }
         }
     }
 
@@ -324,11 +311,12 @@ pub fn scroll_list_begin(
     };
 }
 
-pub fn scroll_list_end() void {
+pub fn scroll_list_end(view: *const Scroll_List_View) Signal {
     ui.pop_parent();
+    return scroll_list_process(view);
 }
 
-pub fn scroll_list_signal(view: *const Scroll_List_View) Signal {
+fn scroll_list_process(view: *const Scroll_List_View) Signal {
     const sig = interaction.signal_from_box(view.container);
 
     const scroll_speed: f32 = 3.0;
@@ -450,7 +438,7 @@ pub fn panel_end() void {
     ui.pop_parent();
 }
 
-pub fn collapsible_header(string: []const u8, open: *bool) *Box {
+pub fn collapsible_header(string: []const u8, open: *bool) Signal {
     const tag = ui.parse_tag(string);
     const arrow: []const u8 = if (open.*) "▼ " else "▶ ";
     const display = ui.arena_print("{s}{s}", .{ arrow, tag.display }) catch string;
@@ -475,12 +463,8 @@ pub fn collapsible_header(string: []const u8, open: *bool) *Box {
         .draw_active_effects = true,
     });
 
-    return header_box;
-}
-
-pub fn collapsible_header_signal(box: *Box, open: *bool) Signal {
-    const sig = interaction.signal_from_box(box);
-    if (sig.flags.left_clicked or sig.flags.keyboard_pressed) {
+    const sig = interaction.signal_from_box(header_box);
+    if (sig.clicked()) {
         open.* = !open.*;
     }
     return sig;
@@ -495,7 +479,7 @@ const Arena = base.Arena;
 
 fn setup_test_frame() *Box {
     ui.init_all() catch @panic("OOM: test init_all");
-    return ui.begin_build(80, 24, 1.0 / 60.0);
+    return ui.begin_build_raw(80, 24, 1.0 / 60.0);
 }
 
 fn teardown_test_frame() void {
@@ -517,10 +501,11 @@ test "label produces a non-interactive text box" {
 
 test "button produces a clickable box with border and text" {
     const root = setup_test_frame();
-    _ = root;
     defer teardown_test_frame();
 
-    const box = button("OK");
+    const sig = button("OK");
+    _ = sig;
+    const box = root.first.?;
     try testing.expect(box.flags.clickable);
     try testing.expect(box.flags.keyboard_clickable);
     try testing.expect(box.flags.draw_border);
@@ -540,20 +525,21 @@ test "separator produces border box" {
 }
 
 test "line_edit creates container with focus flags" {
-    _ = setup_test_frame();
+    const root = setup_test_frame();
     defer teardown_test_frame();
 
     var buf: [64]u8 = undefined;
     var le_state = Line_Edit_State{ .buffer = &buf };
 
-    const box = line_edit("input###test_input", &le_state);
+    _ = line_edit("input###test_input", &le_state);
+    const box = root.first.?;
     try testing.expect(box.flags.focus_hot);
     try testing.expect(box.flags.focus_active);
     try testing.expect(box.flags.draw_border);
     try testing.expect(box.flags.draw_background);
 }
 
-test "line_edit_handle_events inserts text" {
+test "line_edit inserts text" {
     _ = setup_test_frame();
     defer teardown_test_frame();
 
@@ -627,7 +613,7 @@ test "scroll_list_begin computes visible range" {
     try testing.expectEqual(@as(usize, 0), view.first_visible);
     try testing.expect(view.container.flags.view_scroll);
     try testing.expect(view.container.flags.clip);
-    scroll_list_end();
+    _ = scroll_list_end(&view);
 }
 
 test "panel_begin/end creates bordered container" {
@@ -641,16 +627,18 @@ test "panel_begin/end creates bordered container" {
     panel_end();
 }
 
-test "collapsible_header toggles open state" {
-    _ = setup_test_frame();
+test "collapsible_header produces clickable box" {
+    const root = setup_test_frame();
     defer teardown_test_frame();
 
     var open = true;
 
-    const header_box = collapsible_header("Section###sec1", &open);
+    const sig = collapsible_header("Section###sec1", &open);
+    _ = sig;
+    const header_box = root.first.?;
     try testing.expect(header_box.flags.clickable);
     try testing.expect(header_box.flags.draw_text);
-    // open is still true because no signal has been processed
+    // open is still true because no click event was pushed
     try testing.expect(open);
 }
 

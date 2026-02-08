@@ -3,7 +3,6 @@ const base = @import("base");
 const Arena = base.Arena;
 const term = @import("term");
 const ui = @import("ui");
-const Box = ui.Box;
 const BoxFlags = ui.BoxFlags;
 const Size = ui.Size;
 const Color = ui.Color;
@@ -104,19 +103,11 @@ const panel_flags: BoxFlags = .{
 };
 
 // ---------------------------------------------------------------------------
-// Build the UI tree (children under begin_build's root)
+// Build the UI tree with inline signals
 // ---------------------------------------------------------------------------
 
-const BuildResult = struct {
-    dec_buttons: [num_counters]*Box,
-    inc_buttons: [num_counters]*Box,
-    reset_button: *Box,
-    theme_button: *Box,
-};
-
-fn build_ui(app: *const App) !BuildResult {
+fn build_ui(app: *App) !void {
     const theme = app.theme;
-    var result: BuildResult = undefined;
 
     _ = ui.push_color(theme.fg());
 
@@ -165,7 +156,9 @@ fn build_ui(app: *const App) !BuildResult {
             _ = ui.build_box(label_str, .{ .draw_text = true });
 
             const dec_str = try ui.arena_print(" - ##dec_{d}", .{ci});
-            result.dec_buttons[ci] = build_button(dec_str, theme);
+            if (build_button(dec_str, theme).clicked()) {
+                app.counters[ci] -= 1;
+            }
 
             ui.spacer(.x, 1);
 
@@ -179,7 +172,9 @@ fn build_ui(app: *const App) !BuildResult {
             ui.spacer(.x, 1);
 
             const inc_str = try ui.arena_print(" + ##inc_{d}", .{ci});
-            result.inc_buttons[ci] = build_button(inc_str, theme);
+            if (build_button(inc_str, theme).clicked()) {
+                app.counters[ci] += 1;
+            }
 
             ui.spacer(.x, 1);
 
@@ -202,10 +197,17 @@ fn build_ui(app: *const App) !BuildResult {
         defer ui.pop_parent();
 
         ui.spacer(.x, 2);
-        result.reset_button = build_button("Reset All", theme);
+
+        if (build_button("Reset All", theme).clicked()) {
+            app.counters = .{ 0, 0, 0 };
+        }
+
         ui.spacer(.x, 2);
+
         const theme_label: []const u8 = if (app.theme == .dark) "Theme: Light##theme_toggle" else "Theme: Dark##theme_toggle";
-        result.theme_button = build_button(theme_label, theme);
+        if (build_button(theme_label, theme).clicked()) {
+            app.theme = if (app.theme == .dark) .light else .dark;
+        }
     }
 
     // Filler
@@ -229,42 +231,17 @@ fn build_ui(app: *const App) !BuildResult {
 
         ui.pop_parent();
     }
-
-    return result;
 }
 
-fn build_button(string: []const u8, theme: Theme) *Box {
+fn build_button(string: []const u8, theme: Theme) ui.Signal {
     ui.next_width(.text(2, 1));
     ui.next_height(.cells(3, 1));
     ui.next_bg(theme.button_bg());
     ui.next_color(theme.fg());
     ui.next_border_color(theme.accent());
     ui.next_text_padding(1);
-    return ui.build_box(string, button_flags);
-}
-
-// ---------------------------------------------------------------------------
-// Signal handling
-// ---------------------------------------------------------------------------
-
-fn handle_all_signals(app: *App, br: *const BuildResult) void {
-    for (0..num_counters) |ci| {
-        const dec_sig = interaction.signal_from_box(br.dec_buttons[ci]);
-        if (dec_sig.flags.left_clicked or dec_sig.flags.keyboard_pressed)
-            app.counters[ci] -= 1;
-
-        const inc_sig = interaction.signal_from_box(br.inc_buttons[ci]);
-        if (inc_sig.flags.left_clicked or inc_sig.flags.keyboard_pressed)
-            app.counters[ci] += 1;
-    }
-
-    const reset_sig = interaction.signal_from_box(br.reset_button);
-    if (reset_sig.flags.left_clicked or reset_sig.flags.keyboard_pressed)
-        app.counters = .{ 0, 0, 0 };
-
-    const theme_sig = interaction.signal_from_box(br.theme_button);
-    if (theme_sig.flags.left_clicked or theme_sig.flags.keyboard_pressed)
-        app.theme = if (app.theme == .dark) .light else .dark;
+    const box = ui.build_box(string, button_flags);
+    return interaction.signal_from_box(box);
 }
 
 // ---------------------------------------------------------------------------
@@ -329,21 +306,14 @@ pub fn run() !void {
             }
         }
 
-        // -- Build ----------------------------------------------------------
-        _ = try t.check_resize();
-        t.clear();
-
-        const root = ui.begin_build(t.cols, t.rows, dt);
+        // -- Build (check_resize, clear, process_events run inside begin_build)
+        const root = try ui.begin_build(&t, dt);
         root.flags.draw_background = true;
         root.bg_color = app.theme.bg();
 
-        const br = try build_ui(&app);
+        try build_ui(&app);
 
         ui.end_build();
-
-        // -- Interaction ----------------------------------------------------
-        interaction.process_events(root);
-        handle_all_signals(&app, &br);
 
         // -- Draw -----------------------------------------------------------
         var grid = term.draw.Grid.from_term(&t);

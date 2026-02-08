@@ -2,11 +2,13 @@ const std = @import("std");
 const grid = @import("grid.zig");
 const basic_ui = @import("basic_ui.zig");
 const scroll = @import("scroll.zig");
+const widgets = @import("widgets.zig");
 
 const tests = .{
     .{ "grid", grid.run },
     .{ "basic_ui", basic_ui.run },
     .{ "scroll", scroll.run },
+    .{ "widgets", widgets.run },
 };
 
 pub fn main() !void {

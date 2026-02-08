@@ -3,7 +3,6 @@ const base = @import("base");
 const Arena = base.Arena;
 const term = @import("term");
 const ui = @import("ui");
-const Box = ui.Box;
 const BoxFlags = ui.BoxFlags;
 const Size = ui.Size;
 const Color = ui.Color;
@@ -38,20 +37,10 @@ const scrollbar_bg: Color = .{ .rgb = .{ 40, 40, 50 } };
 const scrollbar_fg: Color = .{ .ansi = .bright_white };
 
 // ---------------------------------------------------------------------------
-// Build
+// Build with inline signals
 // ---------------------------------------------------------------------------
 
-const BuildResult = struct {
-    scroll_container: *Box,
-    item_boxes: [128]*Box,
-    item_indices: [128]u32,
-    item_count: u32,
-};
-
-fn build_ui(app: *const App, visible_rows: u32) !BuildResult {
-    var result: BuildResult = undefined;
-    result.item_count = 0;
-
+fn build_ui(app: *App, visible_rows: u32) !void {
     _ = ui.push_color(fg_color);
 
     // Title bar
@@ -87,7 +76,6 @@ fn build_ui(app: *const App, visible_rows: u32) !BuildResult {
             .focus_hot = true,
             .draw_background = true,
         });
-        result.scroll_container = scroll_box;
 
         const max_offset = max_scroll_offset(visible_rows);
         const offset: u32 = @intCast(@max(0, @min(app.scroll_offset, max_offset)));
@@ -109,14 +97,23 @@ fn build_ui(app: *const App, visible_rows: u32) !BuildResult {
                 .draw_text = true,
             });
 
-            if (result.item_count < result.item_boxes.len) {
-                result.item_boxes[result.item_count] = item_box;
-                result.item_indices[result.item_count] = idx;
-                result.item_count += 1;
+            const item_sig = interaction.signal_from_box(item_box);
+            if (item_sig.flags.left_clicked) {
+                app.selected = idx;
             }
         }
 
         ui.pop_parent(); // scroll container
+
+        // Scroll signal
+        const scroll_sig = interaction.signal_from_box(scroll_box);
+        if (scroll_sig.scroll[1] != 0)
+            apply_scroll(app, scroll_sig.scroll[1] * scroll_speed, visible_rows);
+
+        // Keyboard scrolling when the scroll container is focused
+        if (interaction.get_focus_hot_key().eql(scroll_box.key)) {
+            handle_keyboard_scroll(app, visible_rows);
+        }
 
         // Scrollbar track
         ui.next_width(.cells(1, 1));
@@ -147,15 +144,15 @@ fn build_ui(app: *const App, visible_rows: u32) !BuildResult {
     // Status bar
     {
         const max_off = max_scroll_offset(visible_rows);
-        const offset: u32 = @intCast(@max(0, @min(app.scroll_offset, max_off)));
-        const end: u32 = @min(offset + visible_rows, total_items);
+        const current_offset: u32 = @intCast(@max(0, @min(app.scroll_offset, max_off)));
+        const current_end: u32 = @min(current_offset + visible_rows, total_items);
         const sel_str: []const u8 = if (app.selected) |s| blk: {
             break :blk try ui.arena_print("  Selected: {d}", .{s});
         } else "";
 
         const status_str = try ui.arena_print(
             " Showing {d}-{d} of {d}  Offset: {d}{s}",
-            .{ offset, if (end > 0) end - 1 else 0, total_items, offset, sel_str },
+            .{ current_offset, if (current_end > 0) current_end - 1 else 0, total_items, current_offset, sel_str },
         );
 
         ui.next_axis(.x);
@@ -173,33 +170,10 @@ fn build_ui(app: *const App, visible_rows: u32) !BuildResult {
     }
 
     _ = ui.pop_color();
-
-    return result;
 }
 
 fn max_scroll_offset(visible_rows: u32) i32 {
     return @as(i32, @intCast(total_items)) - @as(i32, @intCast(visible_rows));
-}
-
-// ---------------------------------------------------------------------------
-// Signal handling
-// ---------------------------------------------------------------------------
-
-fn handle_signals(app: *App, br: *const BuildResult, visible_rows: u32) void {
-    const scroll_sig = interaction.signal_from_box(br.scroll_container);
-    if (scroll_sig.scroll[1] != 0)
-        apply_scroll(app, scroll_sig.scroll[1] * scroll_speed, visible_rows);
-
-    for (0..br.item_count) |i| {
-        const sig = interaction.signal_from_box(br.item_boxes[i]);
-        if (sig.flags.left_clicked)
-            app.selected = br.item_indices[i];
-    }
-
-    // Keyboard scrolling when the scroll container is focused
-    if (interaction.get_focus_hot_key().eql(br.scroll_container.key)) {
-        handle_keyboard_scroll(app, visible_rows);
-    }
 }
 
 fn handle_keyboard_scroll(app: *App, visible_rows: u32) void {
@@ -304,23 +278,16 @@ pub fn run() !void {
             }
         }
 
-        // -- Build ----------------------------------------------------------
-        _ = try t.check_resize();
-        t.clear();
-
-        const root = ui.begin_build(t.cols, t.rows, dt);
+        // -- Build (check_resize, clear, process_events run inside begin_build)
+        const root = try ui.begin_build(&t, dt);
         root.flags.draw_background = true;
         root.bg_color = bg_color;
 
         // 2 rows for title + status bars
         const visible_rows: u32 = if (t.rows > 2) t.rows - 2 else 0;
-        const br = try build_ui(&app, visible_rows);
+        try build_ui(&app, visible_rows);
 
         ui.end_build();
-
-        // -- Interaction ----------------------------------------------------
-        interaction.process_events(root);
-        handle_signals(&app, &br, visible_rows);
 
         // -- Draw -----------------------------------------------------------
         var grid = term.draw.Grid.from_term(&t);

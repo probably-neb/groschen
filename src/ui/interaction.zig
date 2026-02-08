@@ -83,8 +83,8 @@ pub fn set_focus_hot_key(key: ui.Key) void {
     state.focus_hot_key = key;
 }
 
-pub fn get_focus_active_key() ui.Key {
-    return state.focus_active_key;
+pub fn get_focus_active_key() ?ui.Key {
+    return if (state.focus_active_key.value == 0) null else state.focus_active_key;
 }
 
 pub fn get_mouse_pos() [2]u16 {
