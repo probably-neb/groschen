@@ -5,6 +5,7 @@ const Arena = base.Arena;
 const assert = std.debug.assert;
 
 pub const layout_mod = @import("layout.zig");
+pub const interaction = @import("interaction.zig");
 
 // ---------------------------------------------------------------------------
 // Key
@@ -585,6 +586,10 @@ fn current_arena(self: *State) *Arena {
     return &self.arenas[self.arena_index];
 }
 
+pub fn get_build_arena() *Arena {
+    return current_arena(&g);
+}
+
 /// Begin a new frame. Swaps the arena, resets stacks, bumps the build index,
 /// and creates a root box sized to the screen.
 pub fn begin_build(screen_w: u16, screen_h: u16) *Box {
@@ -858,6 +863,7 @@ pub fn build_box(string: []const u8, extra_flags: BoxFlags) *Box {
             @as(f32, @floatFromInt(b.rect.col)) - @as(f32, @floatFromInt(prev.rect.col)),
             @as(f32, @floatFromInt(b.rect.row)) - @as(f32, @floatFromInt(prev.rect.row)),
         };
+        b.rect = prev.rect;
         box_table_remove(prev);
     } else {
         b.first_touched_build_index = g.build_index;
@@ -912,17 +918,13 @@ pub fn spacer(comptime axis: Axis, amount: f32) void {
 
 pub fn arena_dupe(src: []const u8) ![]const u8 {
     const arena = current_arena(&g);
-    const buf = try arena.alloc(u8, src.len);
-    @memcpy(buf, src);
-    return buf;
+    return arena.dupe(u8, src);
 }
 
 pub fn arena_print(comptime fmt: []const u8, args: anytype) ![]const u8 {
     const arena = current_arena(&g);
-    const scratch = Arena.get_scratch(&.{arena});
-    defer scratch.release();
-    const tmp = std.fmt.allocPrint(scratch.arena.allocator(), fmt, args) catch return error.OutOfMemory;
-    return arena_dupe(tmp);
+    // TODO: duplicate alloc print into a `print` function on base.Arena itself
+    return std.fmt.allocPrint(arena.allocator(), fmt, args);
 }
 
 // ---------------------------------------------------------------------------

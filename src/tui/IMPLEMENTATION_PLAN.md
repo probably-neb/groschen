@@ -262,7 +262,9 @@ output (`rect`, `position_delta[2]`), and persistent state that survives across 
 `focus_active_t`, `view_off[2]`, `view_off_target[2]`, `view_bounds[2]`).
 
 `Color` is `union(enum) { default, ansi: Ansi, rgb: [3]u8 }` where `Ansi` is `enum(u8)`
-with named values 0–15 and an extensible `_` variant. This type is shared with `term.zig`.
+with named values 0–15 and an extensible `_` variant. Both `ui.zig` and `term.zig` define
+structurally identical but independent `Color`/`Ansi` types; demos use `to_term_color()`
+converter functions to bridge between them.
 
 `Rect` has `col`, `row`, `w`, `h` (all `u16`) with `contains` and `intersect`.
 
@@ -312,7 +314,8 @@ a comptime `StackName`) is available for anything not covered by a named helper.
 
 File-level global `State` holds two `Arena` values (double-buffered), an `arena_index: u1`,
 a `build_index: u64` frame counter, a box hash table (`[4096]?*Box` with chained buckets
-via `hash_next`/`hash_prev`), the `Stacks`, a `root: ?*Box`, and `screen_size`.
+via `hash_next`/`hash_prev`), the `Stacks`, a `root: ?*Box`, `screen_size`, and an
+`active: bool` guard that tracks whether a build is in progress.
 
 Two init paths:
 - `init_all()` — allocates two internal arenas for the full `begin_build`/`end_build`
@@ -326,7 +329,8 @@ parent. Returns `*Box` (cannot fail — box allocation panics on OOM).
 `end_build()` runs layout via `layout_mod.layout(root, w, h)`, then prunes stale boxes
 from the hash table (any box whose `last_touched_build_index < build_index`).
 
-`get_root()` returns the current frame's root box.
+`get_root()` returns the current frame's root box. `get_build_arena()` exposes the
+current frame's arena for callers that need to allocate alongside the build.
 
 ### 2.4 — Box Construction (`src/ui/ui.zig`)
 
@@ -385,12 +389,13 @@ to integer via `@trunc` and the final `Rect` is written with `u16` clamping.
 After positioning, each child's `fixed_size[axis]` is re-synced from the snapped rect so
 downstream layout on the other axis sees consistent integer sizes.
 
-### 2.6 — Demo (`src/tui_test/ui_demo.zig`)
+### 2.6 — Demo (`src/tui_test/basic_ui.zig`)
 
-Interactive TUI app (`zig build testing -- ui_demo`) exercising the full stack: 3 counters
-with +/− buttons, reset, theme toggle, mouse + keyboard focus navigation. Contains its
-own minimal layout engine and draw pass (throwaway — these validate the data structures
-but should not be promoted to the real modules).
+Interactive TUI app (`zig build testing -- basic_ui`) exercising the full stack: 3 counters
+with +/− buttons, reset, theme toggle, mouse + keyboard focus navigation. Originally
+contained its own minimal layout engine and interaction handling; those were removed in
+Phase 3 when the real `layout.zig` and `interaction.zig` modules replaced them. Retains
+its own draw pass (throwaway — kept until Phase 4 `draw.zig` exists).
 
 ### 2.7 — Validation
 
@@ -417,60 +422,127 @@ Unit tests in `src/ui/layout.zig`:
 
 ---
 
-## Phase 3: UI Module — Interaction
+## Phase 3: UI Module — Interaction ✅
 
 **Goal**: Implement event processing and signal generation so boxes can respond to
-keyboard and mouse input.
+keyboard and mouse input. Integrate into demos, replacing their throwaway interaction code.
 
-**Files**: `src/ui/interaction.zig`
+**Files**: `src/ui/interaction.zig` (new), `src/ui/ui.zig` (minor additions),
+`src/ui/layout.zig` (bugfix + test), `src/tui_test/basic_ui.zig` (refactored),
+`src/tui_test/scroll.zig` (new demo)
 
 ### 3.1 — Event Conversion
 
-Convert terminal `InputEvent` (from Phase 1) into `UiEvent`:
+`push_event(arena, InputEvent)` converts a terminal `InputEvent` into a `UiEvent` and
+appends it to the frame's arena-allocated linked list (`UiEventList`). Event kinds are
+more granular than the plan originally sketched:
 
 ```
+const UiEventKind = enum { mouse_press, mouse_release, key_press, text, scroll, mouse_move };
+
 const UiEvent = struct {
-    kind: enum { press, release, text, scroll, mouse_move },
-    key: Key,                // which key/button
-    mods: Modifiers,
-    pos: [2]u16,             // mouse position in cells
+    kind: UiEventKind,
+    key: term.Key,
+    codepoint: u21,
+    mods: term.Modifiers,
+    mouse_button: term.MouseButton,
+    pos: [2]u16,
     scroll: [2]i16,
-    text: []const u8,
+    consumed: bool,
+    next: ?*UiEvent,           // intrusive linked list
 };
 ```
 
-Build an `UiEventList` (arena-allocated linked list) at the start of each frame.
+Codepoint key-presses with no modifiers are classified as `.text`; everything else is
+`.key_press`. Mouse events map to `.mouse_press` / `.mouse_release` / `.mouse_move` /
+`.scroll`. Terminal `.resize` events are not converted — they are handled separately by
+`Term.check_resize` in the frame loop.
+
+`begin_frame()` clears the event list. `reset()` zeroes all interaction state.
 
 ### 3.2 — Signal Computation
 
-`signal_from_box(box: *Box) Signal`:
-1. Iterate over the event list
-2. For mouse events: check if `box.rect.contains(event.pos)`
-3. For press in bounds + `clickable` flag → set `active_key`, mark pressed
-4. For release while active + in bounds → mark clicked
-5. For keyboard events: check focus state + `keyboard_clickable` flag
-6. For scroll events: check `view_scroll` flag + in bounds → accumulate scroll delta
-7. Eat consumed events from the list
-8. Compute `hovering`, `mouse_over` based on current mouse position
+`signal_from_box(box: *Box) Signal` iterates the event list and produces a signal:
 
-Update `hot_t` / `active_t` floats based on whether the box is hot/active this frame.
+1. Mouse press in bounds + `clickable` + topmost (`hot_box_key`) → `left_pressed` /
+   `right_pressed`, sets the per-button `active_box_key` (`[2]Key`, indexed by left/right)
+2. Mouse release while active → `left_released` / `right_released`; if still in bounds →
+   `left_clicked` / `right_clicked`
+3. Scroll events in bounds on `view_scroll` boxes → accumulate `scroll[0..1]`
+4. Keyboard enter/space on focused `keyboard_clickable` box → `keyboard_pressed` + `commit`
+5. Consumed events are skipped; events are marked consumed when handled
+6. `hovering` set when mouse is in bounds and box is the hot box; `mouse_over` when just
+   in bounds
+7. `dragging` set while an active press is held
+
+Animates `hot_t`, `active_t`, `focus_hot_t`, `focus_active_t`, `disabled_t` each frame
+via `animate(current, target_on, step)` with a fixed rate of 15 × (1/60) per call.
+
+`update_hot_box(root)` walks the tree pre-order and picks the deepest `clickable`,
+non-disabled box under the current mouse position as `hot_box_key`.
 
 ### 3.3 — Focus Navigation
 
-- Track `focus_hot_key` and `focus_active_key` in state
-- Tab / Shift-Tab cycle through focusable boxes (those with `focus_hot` or `focus_active` flags)
-- Arrow keys navigate between siblings or parent/child depending on layout axis
-- Enter / Space on a focused `keyboard_clickable` box → keyboard press signal
-- Focus order = tree order (depth-first pre-order)
+`process_events(root)` runs three sub-passes in order:
 
-### 3.4 — Validation
+1. **`update_hot_box`** — find hot box under mouse (see above).
+2. **`process_mouse_focus`** — on `mouse_press`, find the deepest `focus_hot`/`focus_active`
+   box at the click position and set `focus_hot_key`.
+3. **`process_focus_navigation`** — collect all focusable boxes in tree order (depth-first
+   pre-order, up to 256). Tab / Shift-Tab cycle `focus_hot_key` through the list.
+   `focus_active_key` follows `focus_hot_key` when the focused box has `focus_active`.
 
-Test:
+Arrow-key navigation between siblings was deferred (not needed by current demos).
+
+### 3.4 — Demo Integration
+
+**`basic_ui.zig`** (renamed from `ui_demo.zig`): Removed the local layout engine
+(`layout_tree`, `resolve_sizes`, `position_children`), local interaction system
+(`FocusableList`, `hit_test`, `signal_for_box`), and per-frame event switch. Now uses:
+- `ui.begin_build` / `ui.end_build` (which calls `layout_mod.layout`)
+- `interaction.begin_frame` / `interaction.push_event` / `interaction.process_events`
+- `interaction.signal_from_box` per interactive box in `handle_all_signals`
+- Stable `##` hash tags on the theme button to preserve focus across label changes
+
+**`scroll.zig`** (new): Virtualized scrollable list of 1000 items demonstrating
+`view_scroll`, mouse wheel + keyboard scrolling (up/down/page/home/end), click-to-select,
+and a scrollbar thumb. Uses `interaction.signal_from_box` for scroll deltas and item clicks.
+
+Both demos share a common frame loop pattern:
+1. `interaction.begin_frame()` clears events
+2. `poll_event` → `is_quit` check → `push_event`; drain remaining events (breaking on
+   `.resize` to avoid infinite loop since `poll_event` returns `.resize` without clearing
+   the flag)
+3. `check_resize` / `clear` / `begin_build` / build / `end_build`
+4. `process_events` / signal handling
+5. draw / `flush`
+
+### 3.5 — Layout Bugfix
+
+`layout.zig` `ancestor_resolved_size`: fixed to return 0 when encountering a
+`children_sum` ancestor, preventing `parent_pct` children from resolving against the root
+when nested inside `children_sum` containers (the pct child would get screen-height
+instead of the row height set by fixed-size siblings). The position pass already handles
+`fixed_size ≤ 0` on the cross axis by filling to available space, so this produces the
+correct result. Added a regression test covering the exact pattern from `basic_ui`'s
+counter rows.
+
+### 3.6 — Validation
+
+Unit tests in `src/ui/interaction.zig`:
 - Mouse click inside a button box → `left_clicked` signal
-- Mouse click outside → no signal
+- Mouse click outside a button box → no signal
 - Tab cycles focus between three focusable boxes
 - Keyboard enter on focused box → `keyboard_pressed` signal
 - Scroll event on scrollable box → scroll delta in signal
+- Scroll event outside scrollable box → no delta
+- Disabled box → no signal
+- Mouse click transfers focus to clicked focusable box
+- Right click inside a button box → `right_clicked` signal
+- Press inside, release outside → `released` but not `clicked`
+
+Unit test in `src/ui/layout.zig`:
+- `parent_pct` child inside `children_sum` row fills sibling height (3), not root height (24)
 
 
 ---
@@ -675,7 +747,7 @@ widgets on top of the working frame loop.
 src/ui/                          # ui build module — rendering-agnostic
 ├── ui.zig                       # Root: types, stacks, state, box construction
 ├── layout.zig                   # 5-pass layout algorithm
-├── interaction.zig              # Event processing, signal_from_box, focus nav (Phase 3, not yet created)
+├── interaction.zig              # Event processing, signal_from_box, focus nav
 └── widgets.zig                  # button, label, line_edit, etc. (Phase 6, not yet created)
 
 src/tui/                         # tui build module — terminal-specific
@@ -688,7 +760,8 @@ src/tui/                         # tui build module — terminal-specific
 src/tui_test/                    # tui_test build module — interactive test apps
 ├── tui_test.zig                 # Entry point: dispatches on CLI arg to test runners
 ├── grid.zig                     # Phase 1 validation: checkerboard + cursor movement
-└── ui_demo.zig                  # Phase 2 validation: counters, focus, theme toggle
+├── basic_ui.zig                 # Phase 2–3 validation: counters, focus, theme toggle
+└── scroll.zig                   # Phase 3 validation: virtualized scroll list, selection
 ```
 
 The split across two build modules is intentional. The `ui` module has zero knowledge of
