@@ -77,6 +77,7 @@ fn render_subtree(ctx: *RenderCtx, box: *Box) void {
     if (box.flags.draw_background) render_background(ctx, box, clip, is_hot, is_active);
     if (box.flags.draw_border) render_border(ctx, box, clip, is_hot);
     if (box.flags.draw_text and box.display_string.len > 0) render_text(ctx, box, clip, is_hot, is_active);
+    if (box.custom_draw) |draw_fn| draw_fn(box, ctx.grid, clip);
 
     const pushed_clip = box.flags.clip;
     if (pushed_clip) push_clip(ctx, rect);
@@ -239,6 +240,9 @@ fn render_text(ctx: *RenderCtx, box: *const Box, clip: Rect, is_hot: bool, is_ac
     const ellipsis_w: u16 = if (needs_truncation) 1 else 0;
     const draw_limit: u16 = inner_width -| ellipsis_w;
 
+    const fastpath_cp = box.fastpath_codepoint;
+    var fastpath_found = false;
+
     var col = start_col;
     var text_index: usize = 0;
     var drawn_width: u16 = 0;
@@ -259,18 +263,27 @@ fn render_text(ctx: *RenderCtx, box: *const Box, clip: Rect, is_hot: bool, is_ac
         }
         if (drawn_width + codepoint_width > draw_limit) break;
 
+        const is_fastpath = fastpath_cp != 0 and !fastpath_found and
+            (cp == fastpath_cp or (cp < 128 and fastpath_cp < 128 and
+                std.ascii.toLower(@as(u8, @intCast(cp))) == std.ascii.toLower(@as(u8, @intCast(fastpath_cp)))));
+        var cell_attrs = attrs;
+        if (is_fastpath) {
+            cell_attrs.underline = true;
+            fastpath_found = true;
+        }
+
         clipped_write(ctx.grid, col, text_row, clip, .{
             .codepoint = cp,
             .fg = fg,
             .bg = bg,
-            .attrs = attrs,
+            .attrs = cell_attrs,
         });
         if (codepoint_width == 2) {
             clipped_write(ctx.grid, col +| 1, text_row, clip, .{
                 .codepoint = 0,
                 .fg = fg,
                 .bg = bg,
-                .attrs = attrs,
+                .attrs = cell_attrs,
             });
         }
         col +|= codepoint_width;

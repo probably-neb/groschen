@@ -1,5 +1,5 @@
 .{
-    .fingerprint = 0x5efc819146d099e2,
+    .fingerprint = 0x5efc8191f884d74c,
     .name = .groschen,
     .version = "0.0.0",
     .minimum_zig_version = "0.15.2",

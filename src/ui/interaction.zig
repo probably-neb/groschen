@@ -3,6 +3,7 @@ const ui = @import("ui.zig");
 const term = @import("term");
 const base = @import("base");
 const Arena = base.Arena;
+const Key = ui.Key;
 
 const assert = std.debug.assert;
 
@@ -59,10 +60,10 @@ pub const UiEventList = struct {
 const InteractionState = struct {
     events: UiEventList = .{},
     mouse_pos: [2]u16 = .{ 0, 0 },
-    hot_box_key: ui.Key = ui.Key.zero,
-    active_box_key: [2]ui.Key = .{ ui.Key.zero, ui.Key.zero },
-    focus_hot_key: ui.Key = ui.Key.zero,
-    focus_active_key: ui.Key = ui.Key.zero,
+    hot_box_key: Key = Key.zero,
+    active_box_key: [2]Key = .{ Key.zero, Key.zero },
+    focus_hot_key: Key = Key.zero,
+    focus_active_key: Key = Key.zero,
 };
 
 var state: InteractionState = .{};
@@ -71,19 +72,19 @@ var state: InteractionState = .{};
 // Public Getters
 // ---------------------------------------------------------------------------
 
-pub fn get_hot_box_key() ui.Key {
+pub fn get_hot_box_key() Key {
     return state.hot_box_key;
 }
 
-pub fn get_focus_hot_key() ui.Key {
+pub fn get_focus_hot_key() Key {
     return state.focus_hot_key;
 }
 
-pub fn set_focus_hot_key(key: ui.Key) void {
+pub fn set_focus_hot_key(key: Key) void {
     state.focus_hot_key = key;
 }
 
-pub fn get_focus_active_key() ?ui.Key {
+pub fn get_focus_active_key() ?Key {
     return if (state.focus_active_key.value == 0) null else state.focus_active_key;
 }
 
@@ -95,7 +96,7 @@ pub fn get_events() *UiEventList {
     return &state.events;
 }
 
-pub fn get_active_box_key(comptime button: enum { left, right }) ui.Key {
+pub fn get_active_box_key(comptime button: enum { left, right }) Key {
     return state.active_box_key[
         switch (button) {
             .left => 0,
@@ -181,7 +182,7 @@ fn update_hot_box(root: *ui.Box) void {
         }
     }
 
-    var result: ui.Key = ui.Key.zero;
+    var result: Key = Key.zero;
     var current: ?*ui.Box = root;
     while (current) |box| {
         if (box.flags.clickable and !box.flags.disabled and
@@ -207,8 +208,8 @@ fn process_mouse_focus(root: *ui.Box) void {
     }
 }
 
-fn find_topmost_focusable_at(root: *ui.Box, col: u16, row: u16) ui.Key {
-    var result: ui.Key = ui.Key.zero;
+fn find_topmost_focusable_at(root: *ui.Box, col: u16, row: u16) Key {
+    var result: Key = Key.zero;
     var current: ?*ui.Box = root;
     while (current) |box| {
         if ((box.flags.focus_hot or box.flags.focus_active) and
@@ -229,7 +230,7 @@ fn find_topmost_focusable_at(root: *ui.Box, col: u16, row: u16) ui.Key {
 const max_focusable = 256;
 
 fn process_focus_navigation(root: *ui.Box) void {
-    var focusable_keys: [max_focusable]ui.Key = undefined;
+    var focusable_keys: [max_focusable]Key = undefined;
     var focusable_count: u32 = 0;
 
     var current: ?*ui.Box = root;
@@ -247,8 +248,8 @@ fn process_focus_navigation(root: *ui.Box) void {
     }
 
     if (focusable_count == 0) {
-        state.focus_hot_key = ui.Key.zero;
-        state.focus_active_key = ui.Key.zero;
+        state.focus_hot_key = Key.zero;
+        state.focus_active_key = Key.zero;
         return;
     }
 
@@ -286,7 +287,7 @@ fn process_focus_navigation(root: *ui.Box) void {
     }
 
     // focus_active follows focus_hot if the focused box has the focus_active flag
-    state.focus_active_key = ui.Key.zero;
+    state.focus_active_key = Key.zero;
     current = root;
     while (current) |box| {
         if (!box.key.is_zero() and box.key.eql(state.focus_hot_key) and box.flags.focus_active) {
@@ -347,14 +348,14 @@ pub fn signal_from_box(box: *ui.Box) ui.Signal {
                     sig.flags.left_released = true;
                     if (box.rect.contains(event.pos[0], event.pos[1]))
                         sig.flags.left_clicked = true;
-                    state.active_box_key[0] = ui.Key.zero;
+                    state.active_box_key[0] = Key.zero;
                     event.consumed = true;
                 }
                 if (is_right) {
                     sig.flags.right_released = true;
                     if (box.rect.contains(event.pos[0], event.pos[1]))
                         sig.flags.right_clicked = true;
-                    state.active_box_key[1] = ui.Key.zero;
+                    state.active_box_key[1] = Key.zero;
                     event.consumed = true;
                 }
             },
@@ -364,6 +365,11 @@ pub fn signal_from_box(box: *ui.Box) ui.Signal {
 
                 sig.scroll[0] +|= event.scroll[0];
                 sig.scroll[1] +|= event.scroll[1];
+
+                const scroll_speed: f32 = 3.0;
+                box.view_off_target[0] += @as(f32, @floatFromInt(event.scroll[0])) * scroll_speed;
+                box.view_off_target[1] += @as(f32, @floatFromInt(event.scroll[1])) * scroll_speed;
+
                 event.consumed = true;
             },
             .key_press, .text, .mouse_move => {},
@@ -383,6 +389,52 @@ pub fn signal_from_box(box: *ui.Box) ui.Signal {
                 event.consumed = true;
             }
         }
+    }
+
+    // -- Keyboard scroll for view_scroll boxes with focus -------------------
+    if (box.flags.view_scroll and !box.key.is_zero() and state.focus_hot_key.eql(box.key)) {
+        const page_y: f32 = @floatFromInt(box.rect.h);
+        event_node = state.events.first;
+        while (event_node) |event| : (event_node = event.next) {
+            if (event.consumed) continue;
+            if (event.kind != .key_press) continue;
+
+            switch (event.key) {
+                .up => {
+                    box.view_off_target[1] -= 1;
+                    event.consumed = true;
+                },
+                .down => {
+                    box.view_off_target[1] += 1;
+                    event.consumed = true;
+                },
+                .page_up => {
+                    box.view_off_target[1] -= page_y;
+                    event.consumed = true;
+                },
+                .page_down => {
+                    box.view_off_target[1] += page_y;
+                    event.consumed = true;
+                },
+                .home => {
+                    box.view_off_target[1] = 0;
+                    event.consumed = true;
+                },
+                .end => {
+                    box.view_off_target[1] = @max(0, box.view_bounds[1] - page_y);
+                    event.consumed = true;
+                },
+                else => {},
+            }
+        }
+    }
+
+    // -- Clamp view_off_target to valid range -------------------------------
+    if (box.flags.view_scroll) {
+        const visible_w: f32 = @floatFromInt(box.rect.w);
+        const visible_h: f32 = @floatFromInt(box.rect.h);
+        box.view_off_target[0] = std.math.clamp(box.view_off_target[0], 0, @max(0, box.view_bounds[0] - visible_w));
+        box.view_off_target[1] = std.math.clamp(box.view_off_target[1], 0, @max(0, box.view_bounds[1] - visible_h));
     }
 
     // -- Dragging -----------------------------------------------------------
@@ -427,7 +479,7 @@ fn make_test_box(arena: *Arena, name: []const u8, flags: ui.BoxFlags, rect: ui.R
     const b = arena.create(ui.Box) catch @panic("OOM");
     b.* = .{};
     const tag = ui.parse_tag(name);
-    b.key = ui.Key.from_string(0, tag.hash_string);
+    b.key = Key.from_string(0, tag.hash_string);
     b.string = name;
     b.display_string = tag.display;
     b.flags = flags;
@@ -592,6 +644,66 @@ test "scroll event on scrollable box produces scroll delta in signal" {
 
     try testing.expectEqual(@as(i16, 1), sig.scroll[1]);
     try testing.expectEqual(@as(i16, 0), sig.scroll[0]);
+
+    // view_off_target should be auto-updated: 2 down (+6) and 1 up (-3) = +3
+    // but clamped to [0, max(0, view_bounds[1] - rect.h)]
+    // view_bounds is 0 by default and rect.h is 20, so max is 0 → clamped to 0
+    try testing.expectEqual(@as(f32, 0), scroller.view_off_target[1]);
+}
+
+test "scroll event updates view_off_target with view_bounds set" {
+    var arena = try Arena.init(.{});
+    defer arena.deinit();
+
+    reset();
+    begin_frame();
+
+    const root = make_test_box(&arena, "root###r2", .{}, .{ .col = 0, .row = 0, .w = 80, .h = 24 });
+    const scroller = make_test_box(&arena, "scr###s2", .{
+        .view_scroll = true,
+        .clickable = true,
+    }, .{ .col = 0, .row = 0, .w = 40, .h = 20 });
+    scroller.view_bounds = .{ 0, 1000 };
+    link_children(root, &.{scroller});
+
+    push_event(&arena, .{ .mouse = .{ .kind = .scroll_down, .button = .none, .col = 10, .row = 10, .mods = .{} } });
+    push_event(&arena, .{ .mouse = .{ .kind = .scroll_down, .button = .none, .col = 10, .row = 10, .mods = .{} } });
+
+    process_events(root);
+    const sig = signal_from_box(scroller);
+
+    // 2 scroll_down events × 3.0 speed = 6.0
+    try testing.expectEqual(@as(f32, 6.0), scroller.view_off_target[1]);
+    try testing.expectEqual(@as(i16, 2), sig.scroll[1]);
+}
+
+test "view_off_target is clamped to max scroll range" {
+    var arena = try Arena.init(.{});
+    defer arena.deinit();
+
+    reset();
+    begin_frame();
+
+    const root = make_test_box(&arena, "root###r3", .{}, .{ .col = 0, .row = 0, .w = 80, .h = 24 });
+    const scroller = make_test_box(&arena, "scr###s3", .{
+        .view_scroll = true,
+        .clickable = true,
+    }, .{ .col = 0, .row = 0, .w = 40, .h = 20 });
+    // 30 total content, 20 visible → max scroll = 10
+    scroller.view_bounds = .{ 0, 30 };
+    link_children(root, &.{scroller});
+
+    // 5 scroll_down × 3.0 = 15 → should clamp to 10
+    push_event(&arena, .{ .mouse = .{ .kind = .scroll_down, .button = .none, .col = 10, .row = 10, .mods = .{} } });
+    push_event(&arena, .{ .mouse = .{ .kind = .scroll_down, .button = .none, .col = 10, .row = 10, .mods = .{} } });
+    push_event(&arena, .{ .mouse = .{ .kind = .scroll_down, .button = .none, .col = 10, .row = 10, .mods = .{} } });
+    push_event(&arena, .{ .mouse = .{ .kind = .scroll_down, .button = .none, .col = 10, .row = 10, .mods = .{} } });
+    push_event(&arena, .{ .mouse = .{ .kind = .scroll_down, .button = .none, .col = 10, .row = 10, .mods = .{} } });
+
+    process_events(root);
+    _ = signal_from_box(scroller);
+
+    try testing.expectEqual(@as(f32, 10.0), scroller.view_off_target[1]);
 }
 
 test "scroll event outside scrollable box produces no delta" {

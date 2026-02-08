@@ -254,17 +254,12 @@ fn next_char_len(buf: []const u8) usize {
 // Scroll List
 // ---------------------------------------------------------------------------
 
-pub const Scroll_List_State = struct {
-    scroll_offset: f32 = 0,
-};
-
 pub const Scroll_List_View = struct {
     first_visible: usize,
     visible_count: usize,
     total_count: usize,
     row_height: u16,
     container: *Box,
-    state: *Scroll_List_State,
 };
 
 const scroll_list_flags: BoxFlags = .{
@@ -280,11 +275,11 @@ pub fn scroll_list_begin(
     string: []const u8,
     total_count: usize,
     row_height: u16,
-    state: *Scroll_List_State,
 ) Scroll_List_View {
     const container = ui.push_parent_box(string, scroll_list_flags);
 
-    // Use previous frame's rect to determine visible area
+    container.view_bounds[1] = @floatFromInt(total_count * row_height);
+
     const available_height: u16 = container.rect.h;
     const rows_visible: usize = if (row_height > 0)
         @intCast(@divFloor(available_height, row_height) + 1)
@@ -292,11 +287,8 @@ pub fn scroll_list_begin(
         0;
 
     const rh_f: f32 = @floatFromInt(row_height);
-    const max_offset = max_scroll(total_count, row_height, available_height);
-    state.scroll_offset = std.math.clamp(state.scroll_offset, 0, max_offset);
-
     const first_visible: usize = if (rh_f > 0)
-        @intFromFloat(@divFloor(state.scroll_offset, rh_f))
+        @intFromFloat(@divFloor(container.view_off_target[1], rh_f))
     else
         0;
     const visible_count = @min(rows_visible, total_count -| first_visible);
@@ -307,87 +299,20 @@ pub fn scroll_list_begin(
         .total_count = total_count,
         .row_height = row_height,
         .container = container,
-        .state = state,
     };
 }
 
 pub fn scroll_list_end(view: *const Scroll_List_View) Signal {
     ui.pop_parent();
-    return scroll_list_process(view);
-}
-
-fn scroll_list_process(view: *const Scroll_List_View) Signal {
-    const sig = interaction.signal_from_box(view.container);
-
-    const scroll_speed: f32 = 3.0;
-    if (sig.scroll[1] != 0) {
-        view.state.scroll_offset += @as(f32, @floatFromInt(sig.scroll[1])) * scroll_speed;
-    }
-
-    const is_focused = !view.container.key.is_zero() and
-        interaction.get_focus_hot_key().eql(view.container.key);
-    if (is_focused) {
-        handle_scroll_keys(view);
-    }
-
-    const max_off = max_scroll(view.total_count, view.row_height, view.container.rect.h);
-    view.state.scroll_offset = std.math.clamp(view.state.scroll_offset, 0, max_off);
-
-    return sig;
-}
-
-fn handle_scroll_keys(view: *const Scroll_List_View) void {
-    const rh: f32 = @floatFromInt(view.row_height);
-    const page: f32 = @floatFromInt(view.container.rect.h);
-
-    var ev = interaction.get_events().first;
-    while (ev) |event| : (ev = event.next) {
-        if (event.consumed) continue;
-        if (event.kind != .key_press) continue;
-
-        switch (event.key) {
-            .up => {
-                view.state.scroll_offset -= rh;
-                event.consumed = true;
-            },
-            .down => {
-                view.state.scroll_offset += rh;
-                event.consumed = true;
-            },
-            .page_up => {
-                view.state.scroll_offset -= page;
-                event.consumed = true;
-            },
-            .page_down => {
-                view.state.scroll_offset += page;
-                event.consumed = true;
-            },
-            .home => {
-                view.state.scroll_offset = 0;
-                event.consumed = true;
-            },
-            .end => {
-                const max_off = max_scroll(view.total_count, view.row_height, view.container.rect.h);
-                view.state.scroll_offset = max_off;
-                event.consumed = true;
-            },
-            else => {},
-        }
-    }
-}
-
-fn max_scroll(total_count: usize, row_height: u16, available_height: u16) f32 {
-    const total_h: f32 = @floatFromInt(total_count * row_height);
-    const avail: f32 = @floatFromInt(available_height);
-    return @max(0, total_h - avail);
+    return interaction.signal_from_box(view.container);
 }
 
 /// Build a scrollbar indicator as a sibling. Call this after scroll_list_end,
 /// while still inside the same parent that contains the scroll list.
 pub fn scrollbar(view: *const Scroll_List_View) void {
-    const total_h: f32 = @floatFromInt(view.total_count * view.row_height);
-    const avail: f32 = @floatFromInt(view.container.rect.h);
-    if (total_h <= avail or avail <= 0) return;
+    const total_h = view.container.view_bounds[1];
+    const available: f32 = @floatFromInt(view.container.rect.h);
+    if (total_h <= available or available <= 0) return;
 
     ui.next_width(.cells(1, 1));
     ui.next_height(.pct(1, 1));
@@ -395,9 +320,9 @@ pub fn scrollbar(view: *const Scroll_List_View) void {
     const track = ui.push_parent_box("scrollbar###__wgt_sbar", .{ .draw_background = true });
     track.child_layout_axis = .y;
 
-    const track_h = avail;
-    const thumb_h = @max(1.0, track_h * avail / total_h);
-    const thumb_pos = track_h * view.state.scroll_offset / total_h;
+    const track_h = available;
+    const thumb_h = @max(1.0, track_h * available / total_h);
+    const thumb_pos = track_h * view.container.view_off_target[1] / total_h;
 
     if (thumb_pos > 0) {
         ui.next_width(.cells(1, 1));
@@ -605,11 +530,7 @@ test "scroll_list_begin computes visible range" {
     _ = setup_test_frame();
     defer teardown_test_frame();
 
-    var scroll_state = Scroll_List_State{};
-
-    // Container gets previous frame rect of 0,0,0,0 on first frame
-    // so visible_count will be based on that
-    const view = scroll_list_begin("list###test_list", 100, 1, &scroll_state);
+    const view = scroll_list_begin("list###test_list", 100, 1);
     try testing.expectEqual(@as(usize, 0), view.first_visible);
     try testing.expect(view.container.flags.view_scroll);
     try testing.expect(view.container.flags.clip);
@@ -650,11 +571,4 @@ test "prev_char_len handles ascii" {
 test "next_char_len handles ascii" {
     const buf = "abc";
     try testing.expectEqual(@as(usize, 1), next_char_len(buf));
-}
-
-test "max_scroll computes correctly" {
-    // 100 items * 1 cell each = 100 total, 24 visible → 76 max scroll
-    try testing.expectEqual(@as(f32, 76.0), max_scroll(100, 1, 24));
-    // All items fit → 0
-    try testing.expectEqual(@as(f32, 0.0), max_scroll(10, 1, 24));
 }

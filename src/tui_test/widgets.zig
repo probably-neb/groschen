@@ -43,7 +43,6 @@ const App = struct {
     search_buf: [128]u8 = [_]u8{0} ** 128,
     search_state: widgets.Line_Edit_State = undefined,
 
-    scroll_state: widgets.Scroll_List_State = .{},
     selected_item: ?usize = null,
 
     details_open: bool = true,
@@ -316,7 +315,6 @@ fn build_scroll_list(app: *App) !void {
         "item_list###scroll_list",
         total_list_items,
         1,
-        &app.scroll_state,
     );
 
     for (view.first_visible..view.first_visible + view.visible_count) |index| {

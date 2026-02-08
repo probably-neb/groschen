@@ -317,12 +317,17 @@ pub const Box = struct {
     flags: BoxFlags = .{},
     string: []const u8 = "",
     display_string: []const u8 = "",
+    fastpath_codepoint: u21 = 0,
     text_align: TextAlign = .left,
     pref_size: [2]Size = .{ .{}, .{} },
     child_layout_axis: Axis = .y,
     fixed_position: [2]f32 = .{ 0, 0 },
     fixed_size: [2]f32 = .{ 0, 0 },
     min_size: [2]f32 = .{ 0, 0 },
+
+    // custom rendering callback
+    custom_draw: ?*const fn (*Box, *term.draw.Grid, Rect) void = null,
+    custom_draw_user_data: ?*anyopaque = null,
 
     // styling
     bg_color: Color = .default,
@@ -956,6 +961,34 @@ pub fn arena_print(comptime fmt: []const u8, args: anytype) ![]const u8 {
     const arena = current_arena(&g);
     // TODO: duplicate alloc print into a `print` function on base.Arena itself
     return std.fmt.allocPrint(arena.allocator(), fmt, args);
+}
+
+// ---------------------------------------------------------------------------
+// Custom draw data helper
+// ---------------------------------------------------------------------------
+
+/// Bidirectional cast for `custom_draw_user_data`.
+///
+///   // Storing — typed pointer → *anyopaque:
+///   box.custom_draw_user_data = custom_draw_data(f32, &app.progress);
+///
+///   // Reading — *anyopaque → typed pointer:
+///   const ptr = custom_draw_data(f32, box.custom_draw_user_data) orelse return;
+pub fn custom_draw_data(comptime T: type, value: anytype) Custom_Draw_Data(T, @TypeOf(value)) {
+    const V = @TypeOf(value);
+    if (V == ?*anyopaque) {
+        return if (value) |ptr| @ptrCast(@alignCast(ptr)) else null;
+    } else if (V == *anyopaque) {
+        return @ptrCast(@alignCast(value));
+    } else {
+        return @ptrCast(@constCast(value));
+    }
+}
+
+fn Custom_Draw_Data(comptime T: type, comptime V: type) type {
+    if (V == ?*anyopaque) return ?*T;
+    if (V == *anyopaque) return *T;
+    return *anyopaque;
 }
 
 // ---------------------------------------------------------------------------

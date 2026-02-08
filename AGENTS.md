@@ -234,6 +234,24 @@ Operations: `prepend`, `append`, `insert_after`, `insert_before`, `remove`, `pop
   - ❌ Do not stash `ui.arena_print` results into `App` fields.
   - ✅ For persistent text, store a `[]u8` buffer on the state and format into it.
 
+## Box as State Container
+
+Following the raddebugger UI model, **persistent per-widget state lives directly on the `Box` struct** rather than in separate state objects. Every `Box` carries fields like `hot_t`, `active_t`, `view_off`, `view_off_target`, `view_bounds`, etc. that survive across frames (copied from the previous frame's box with the same key in `build_box`).
+
+**Why this design:**
+- **Minimal overhead.** A few extra floats per box cost almost nothing — boxes are arena-allocated and transient. Unused fields sit at zero.
+- **Flexible composition.** Any box can become scrollable, animatable, or interactive just by setting flags. No need to pair it with a separate state struct or look up state in a side table.
+- **No state lifetime management.** The box tree owns the state. When a box stops being built, its state is naturally pruned. No manual cleanup, no dangling references to freed state objects.
+- **One-frame-behind pattern.** `build_box` copies persistent fields from the previous frame's box. Widget code reads last frame's state (e.g. `view_off_target`) to decide what to build, then `signal_from_box` updates state for the next frame. This is standard for immediate-mode UI.
+
+**Scrolling example:** A box with `view_scroll` flag automatically gets scroll input handling in `signal_from_box`. Mouse wheel events update `view_off_target`; keyboard arrows/page keys do the same when the box has focus. The caller sets `view_bounds` to declare total content size, and the framework clamps `view_off_target` to the valid range. The `scroll_list_begin`/`scroll_list_end` widget is a convenience that reads `view_off_target` to compute visible row ranges — no external `Scroll_State` needed.
+
+**Rules of thumb:**
+- ✅ Add new persistent per-widget state as fields on `Box` when the overhead is trivial (a few scalars).
+- ✅ Use `view_off_target` / `view_bounds` for scroll state — don't create separate scroll state structs.
+- ❌ Don't store large or variable-size data on `Box` (buffers, lists). Use a keyed side table or app state for those.
+- ❌ Don't read `view_off` to determine scroll position in widget code — read `view_off_target`. `view_off` is the visual/layout offset (used by the layout pass to shift children) and may lag behind the target during animation.
+
 ## Defer + Scoped Styles
 
 - Prefer `push_*` + `defer pop_*` for repeated styles.

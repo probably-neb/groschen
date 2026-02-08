@@ -7,6 +7,7 @@ const BoxFlags = ui.BoxFlags;
 const Size = ui.Size;
 const Color = ui.Color;
 const interaction = ui.interaction;
+const widgets = ui.widgets;
 
 // ---------------------------------------------------------------------------
 // Application state
@@ -14,10 +15,8 @@ const interaction = ui.interaction;
 
 const total_items: u32 = 1000;
 const item_height: u32 = 1;
-const scroll_speed: i32 = 3;
 
 const App = struct {
-    scroll_offset: i32 = 0,
     selected: ?u32 = null,
 };
 
@@ -72,33 +71,31 @@ fn build_main_area(app: *App, visible_rows: u32) !void {
     _ = ui.push_parent_box("main_area###main", .{});
     defer ui.pop_parent();
 
-    const scroll_box = try build_scroll_container(app, visible_rows);
-    handle_scroll_input(app, scroll_box, visible_rows);
-    build_scrollbar(app, visible_rows);
+    try build_scroll_list(app, visible_rows);
 }
 
-fn build_scroll_container(app: *App, visible_rows: u32) !*ui.Box {
-    ui.next_width(.pct(1, 0));
+fn build_scroll_list(app: *App, visible_rows: u32) !void {
+    ui.next_axis(.x);
+    ui.next_width(.pct(1, 1));
     ui.next_height(.pct(1, 1));
-    _ = ui.push_bg(.{ .rgb = .{ 20, 20, 30 } });
-    defer _ = ui.pop_bg();
-    const scroll_box = ui.push_parent_box("scroll_list###scroll", .{
-        .clickable = true,
-        .view_scroll = true,
-        .focus_hot = true,
-        .draw_background = true,
-    });
+    _ = ui.push_parent_box("scroll_area###scroll_wrap", .{});
     defer ui.pop_parent();
 
-    const max_offset = max_scroll_offset(visible_rows);
-    const offset: u32 = @intCast(@max(0, @min(app.scroll_offset, max_offset)));
-    const end: u32 = @min(offset + visible_rows, total_items);
+    ui.next_width(.pct(1, 0));
+    ui.next_height(.pct(1, 1));
+    ui.next_bg(.{ .rgb = .{ 20, 20, 30 } });
+    var view = widgets.scroll_list_begin(
+        "scroll_list###scroll",
+        total_items,
+        @intCast(item_height),
+    );
 
-    for (offset..end) |item_index| {
+    for (view.first_visible..view.first_visible + view.visible_count) |item_index| {
         build_scroll_row(app, @intCast(item_index));
     }
 
-    return scroll_box;
+    _ = widgets.scroll_list_end(&view);
+    build_scrollbar_from_box(view.container, visible_rows);
 }
 
 fn build_scroll_row(app: *App, index: u32) void {
@@ -129,18 +126,11 @@ fn build_scroll_row(app: *App, index: u32) void {
     }
 }
 
-fn handle_scroll_input(app: *App, scroll_box: *ui.Box, visible_rows: u32) void {
-    const scroll_sig = interaction.signal_from_box(scroll_box);
-    if (scroll_sig.scroll[1] != 0) {
-        apply_scroll(app, scroll_sig.scroll[1] * scroll_speed, visible_rows);
-    }
+fn build_scrollbar_from_box(container: *ui.Box, visible_rows: u32) void {
+    const total_h = container.view_bounds[1];
+    const avail: f32 = @floatFromInt(visible_rows);
+    if (total_h <= avail or avail <= 0) return;
 
-    if (interaction.get_focus_hot_key().eql(scroll_box.key)) {
-        handle_keyboard_scroll(app, visible_rows);
-    }
-}
-
-fn build_scrollbar(app: *App, visible_rows: u32) void {
     ui.next_width(.cells(1, 1));
     ui.next_height(.pct(1, 1));
     _ = ui.push_bg(scrollbar_bg);
@@ -148,35 +138,37 @@ fn build_scrollbar(app: *App, visible_rows: u32) void {
     _ = ui.push_parent_box("scrollbar###sbar", .{ .draw_background = true });
     defer ui.pop_parent();
 
-    if (visible_rows < total_items and visible_rows > 0) {
-        const max_offset = max_scroll_offset(visible_rows);
-        const offset: u32 = @intCast(@max(0, @min(app.scroll_offset, max_offset)));
-        const track_h: f32 = @floatFromInt(visible_rows);
-        const thumb_h_f = @max(1.0, track_h * @as(f32, @floatFromInt(visible_rows)) / @as(f32, @floatFromInt(total_items)));
-        const thumb_pos_f = track_h * @as(f32, @floatFromInt(offset)) / @as(f32, @floatFromInt(total_items));
+    const track_h = avail;
+    const thumb_h = @max(1.0, track_h * avail / total_h);
+    const thumb_pos = track_h * container.view_off_target[1] / total_h;
 
+    if (thumb_pos > 0) {
         ui.next_width(.cells(1, 1));
-        ui.next_height(.cells(thumb_pos_f, 1));
+        ui.next_height(.cells(thumb_pos, 1));
         _ = ui.build_box("", .{});
-
-        ui.next_width(.cells(1, 1));
-        ui.next_height(.cells(thumb_h_f, 1));
-        _ = ui.push_bg(scrollbar_fg);
-        defer _ = ui.pop_bg();
-        _ = ui.build_box("scrollbar_thumb###thumb", .{ .draw_background = true });
     }
+
+    ui.next_width(.cells(1, 1));
+    ui.next_height(.cells(thumb_h, 1));
+    _ = ui.push_bg(scrollbar_fg);
+    defer _ = ui.pop_bg();
+    _ = ui.build_box("scrollbar_thumb###thumb", .{ .draw_background = true });
 }
 
 fn build_status_bar(app: *App, visible_rows: u32) !void {
-    const max_off = max_scroll_offset(visible_rows);
-    const current_offset: u32 = @intCast(@max(0, @min(app.scroll_offset, max_off)));
-    const current_end: u32 = @min(current_offset + visible_rows, total_items);
+    const total_h: f32 = @floatFromInt(total_items * item_height);
+    const avail: f32 = @floatFromInt(visible_rows);
+    const max_offset = @max(0, total_h - avail);
+
+    // We don't have access to the scroll box here, so display what we can.
+    // Read from the scroll box would require passing it through; instead we
+    // build the status from known constants and the selected item.
     const sel_str: []const u8 = if (app.selected) |s| blk: {
         break :blk ui.arena_print("  Selected: {d}", .{s}) catch "";
     } else "";
     const status_str = try ui.arena_print(
-        " Showing {d}-{d} of {d}  Offset: {d}{s}",
-        .{ current_offset, if (current_end > 0) current_end - 1 else 0, total_items, current_offset, sel_str },
+        " {d} items  Max scroll: {d:.0}{s}",
+        .{ total_items, max_offset, sel_str },
     );
 
     ui.next_axis(.x);
@@ -192,50 +184,6 @@ fn build_status_bar(app: *App, visible_rows: u32) !void {
     _ = ui.push_color(bg_color);
     defer _ = ui.pop_color();
     _ = ui.build_box(status_str, .{ .draw_text = true });
-}
-
-fn max_scroll_offset(visible_rows: u32) i32 {
-    return @as(i32, @intCast(total_items)) - @as(i32, @intCast(visible_rows));
-}
-
-fn handle_keyboard_scroll(app: *App, visible_rows: u32) void {
-    var ev = interaction.get_events().first;
-    while (ev) |e| : (ev = e.next) {
-        if (e.consumed) continue;
-        if (e.kind != .key_press) continue;
-
-        switch (e.key) {
-            .up => {
-                apply_scroll(app, -1, visible_rows);
-                e.consumed = true;
-            },
-            .down => {
-                apply_scroll(app, 1, visible_rows);
-                e.consumed = true;
-            },
-            .page_up => {
-                apply_scroll(app, -@as(i32, @intCast(visible_rows)), visible_rows);
-                e.consumed = true;
-            },
-            .page_down => {
-                apply_scroll(app, @as(i32, @intCast(visible_rows)), visible_rows);
-                e.consumed = true;
-            },
-            .home => {
-                app.scroll_offset = 0;
-                e.consumed = true;
-            },
-            .end => {
-                app.scroll_offset = max_scroll_offset(visible_rows);
-                e.consumed = true;
-            },
-            else => {},
-        }
-    }
-}
-
-fn apply_scroll(app: *App, delta: i32, visible_rows: u32) void {
-    app.scroll_offset = @max(0, @min(app.scroll_offset + delta, max_scroll_offset(visible_rows)));
 }
 
 // ---------------------------------------------------------------------------
