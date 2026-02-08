@@ -1,5 +1,6 @@
 const std = @import("std");
 const ui = @import("ui.zig");
+const draw = @import("term").draw;
 const Box = ui.Box;
 const Axis = ui.Axis;
 const Size = ui.Size;
@@ -335,11 +336,8 @@ fn tree_next_within(current: *Box, root: *const Box) ?*Box {
     }
 }
 
-/// Measure display width in terminal columns.
-/// For now this counts bytes, which is correct for ASCII.
-/// TODO: proper unicode grapheme cluster / East Asian Width handling.
 fn display_width(s: []const u8) usize {
-    return s.len;
+    return draw.text_display_width(s);
 }
 
 fn snap(v: f32) f32 {

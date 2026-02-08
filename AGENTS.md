@@ -7,6 +7,7 @@
 
 ## Code Style
 
+- **Use descriptive variable names.** Prefer full, readable names like `index`, `codepoint`, `count` instead of abbreviations like `i`, `cp`, `n`. Well-established short forms are fine: `col`/`row`, `w`/`h`, `fg`/`bg`, `buf`, `ptr`, `pos`. Avoid ad-hoc abbreviations like `r` for rect or `cb` for callback — if the short form isn't immediately obvious, spell it out.
 - **Prefer free functions over methods.** Especially prefer free functions that take plain old data (slices, integers, structs) as arguments rather than attaching behavior to types via methods. This keeps data structures simple and logic easy to test, compose, and reuse. Methods are acceptable for core type operations (e.g. `arena.alloc()`, `list.append()`), but default to free functions for everything else.
 
 ## Throwaway Test Binaries

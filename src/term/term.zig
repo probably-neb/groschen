@@ -199,8 +199,20 @@ pub const KeyEvent = struct {
     mods: Modifiers = .{},
 };
 
-pub const MouseKind = enum { press, release, move, scroll_up, scroll_down };
-pub const MouseButton = enum { left, middle, right, none };
+pub const MouseKind = enum {
+    press,
+    release,
+    move,
+    scroll_up,
+    scroll_down,
+};
+
+pub const MouseButton = enum {
+    left,
+    middle,
+    right,
+    none,
+};
 
 pub const MouseEvent = struct {
     kind: MouseKind = .press,
@@ -251,6 +263,72 @@ fn emergency_cleanup() void {
 // Term
 // ---------------------------------------------------------------------------
 
+pub const InitError = Arena.InitError || Arena.AllocError || posix.TermiosGetError || posix.TermiosSetError;
+
+pub fn init(arena: *Arena) InitError!Term {
+    const fd = posix.open("/dev/tty", .{ .ACCMODE = .RDWR }, 0) catch posix.STDIN_FILENO;
+    const original_termios = try posix.tcgetattr(fd);
+
+    var raw = original_termios;
+    raw.iflag.BRKINT = false;
+    raw.iflag.ICRNL = false;
+    raw.iflag.INPCK = false;
+    raw.iflag.ISTRIP = false;
+    raw.iflag.IXON = false;
+    raw.oflag.OPOST = false;
+    raw.lflag.ECHO = false;
+    raw.lflag.ICANON = false;
+    raw.lflag.IEXTEN = false;
+    raw.lflag.ISIG = false;
+    raw.cflag.CSIZE = @enumFromInt(3); // CS8
+    raw.cc[@intFromEnum(c.V.MIN)] = 0;
+    raw.cc[@intFromEnum(c.V.TIME)] = 0;
+    try posix.tcsetattr(fd, .FLUSH, raw);
+
+    global_tty_fd = fd;
+    global_original_termios = original_termios;
+
+    if (!global_installed) {
+        const winch_sa: posix.Sigaction = .{
+            .handler = .{ .handler = &handle_sigwinch },
+            .mask = 0,
+            .flags = 0,
+        };
+        posix.sigaction(posix.SIG.WINCH, &winch_sa, null);
+
+        const fatal_sa: posix.Sigaction = .{
+            .handler = .{ .handler = &handle_fatal_signal },
+            .mask = 0,
+            .flags = 0,
+        };
+        posix.sigaction(posix.SIG.TERM, &fatal_sa, null);
+        posix.sigaction(posix.SIG.HUP, &fatal_sa, null);
+        posix.sigaction(posix.SIG.INT, &fatal_sa, null);
+        global_installed = true;
+    }
+
+    const tty: std.fs.File = .{ .handle = fd };
+    tty.writeAll(mode.enter_all) catch {};
+
+    const size = query_size(fd);
+    const total = @as(usize, size.cols) * @as(usize, size.rows);
+    const front = try arena.alloc(Cell, total);
+    const back = try arena.alloc(Cell, total);
+    @memset(front, blank_cell);
+    @memset(back, blank_cell);
+
+    return .{
+        .tty_fd = fd,
+        .tty = tty,
+        .original_termios = original_termios,
+        .cols = size.cols,
+        .rows = size.rows,
+        .front = front,
+        .back = back,
+        .arena = arena,
+    };
+}
+
 pub const Term = struct {
     tty_fd: posix.fd_t,
     tty: std.fs.File,
@@ -263,72 +341,6 @@ pub const Term = struct {
     input_buf: [256]u8 = undefined,
     input_len: usize = 0,
     input_pos: usize = 0,
-
-    pub const InitError = Arena.InitError || Arena.AllocError || posix.TermiosGetError || posix.TermiosSetError;
-
-    pub fn init(arena: *Arena) InitError!Term {
-        const fd = posix.open("/dev/tty", .{ .ACCMODE = .RDWR }, 0) catch posix.STDIN_FILENO;
-        const original_termios = try posix.tcgetattr(fd);
-
-        var raw = original_termios;
-        raw.iflag.BRKINT = false;
-        raw.iflag.ICRNL = false;
-        raw.iflag.INPCK = false;
-        raw.iflag.ISTRIP = false;
-        raw.iflag.IXON = false;
-        raw.oflag.OPOST = false;
-        raw.lflag.ECHO = false;
-        raw.lflag.ICANON = false;
-        raw.lflag.IEXTEN = false;
-        raw.lflag.ISIG = false;
-        raw.cflag.CSIZE = @enumFromInt(3); // CS8
-        raw.cc[@intFromEnum(c.V.MIN)] = 0;
-        raw.cc[@intFromEnum(c.V.TIME)] = 0;
-        try posix.tcsetattr(fd, .FLUSH, raw);
-
-        global_tty_fd = fd;
-        global_original_termios = original_termios;
-
-        if (!global_installed) {
-            const winch_sa: posix.Sigaction = .{
-                .handler = .{ .handler = &handle_sigwinch },
-                .mask = 0,
-                .flags = 0,
-            };
-            posix.sigaction(posix.SIG.WINCH, &winch_sa, null);
-
-            const fatal_sa: posix.Sigaction = .{
-                .handler = .{ .handler = &handle_fatal_signal },
-                .mask = 0,
-                .flags = 0,
-            };
-            posix.sigaction(posix.SIG.TERM, &fatal_sa, null);
-            posix.sigaction(posix.SIG.HUP, &fatal_sa, null);
-            posix.sigaction(posix.SIG.INT, &fatal_sa, null);
-            global_installed = true;
-        }
-
-        const tty: std.fs.File = .{ .handle = fd };
-        tty.writeAll(mode.enter_all) catch {};
-
-        const size = query_size(fd);
-        const total = @as(usize, size.cols) * @as(usize, size.rows);
-        const front = try arena.alloc(Cell, total);
-        const back = try arena.alloc(Cell, total);
-        @memset(front, blank_cell);
-        @memset(back, blank_cell);
-
-        return .{
-            .tty_fd = fd,
-            .tty = tty,
-            .original_termios = original_termios,
-            .cols = size.cols,
-            .rows = size.rows,
-            .front = front,
-            .back = back,
-            .arena = arena,
-        };
-    }
 
     pub fn deinit(self: *Term) void {
         self.tty.writeAll(mode.exit_all) catch {};
@@ -413,8 +425,8 @@ pub const Term = struct {
     pub fn flush(self: *Term) !void {
         const scratch = Arena.get_scratch(&.{self.arena});
         defer scratch.release();
-        const a = scratch.arena;
-        const start = a.get_pos();
+        const arena: *Arena = scratch.arena;
+        const start = arena.get_pos();
 
         var cur_fg: Color = .default;
         var cur_bg: Color = .default;
@@ -423,7 +435,7 @@ pub const Term = struct {
         var cursor_col: u16 = 0;
         var cursor_valid = false;
 
-        try emit(a, mode.cursor_hide);
+        try emit(arena, mode.cursor_hide);
 
         for (0..self.rows) |r| {
             const row: u16 = @intCast(r);
@@ -444,14 +456,14 @@ pub const Term = struct {
                 }
 
                 if (!cursor_valid or cursor_row != row or cursor_col != col) {
-                    try emit_cup(a, row, col);
+                    try emit_cup(arena, row, col);
                 }
 
-                try emit_sgr(a, back_cell, &cur_fg, &cur_bg, &cur_attrs);
+                try emit_sgr(arena, back_cell, &cur_fg, &cur_bg, &cur_attrs);
 
                 var cp_buf: [4]u8 = undefined;
                 const cp_len = std.unicode.utf8Encode(back_cell.codepoint, &cp_buf) catch 1;
-                try emit(a, cp_buf[0..cp_len]);
+                try emit(arena, cp_buf[0..cp_len]);
 
                 const w = codepoint_width(back_cell.codepoint);
                 cursor_row = row;
@@ -461,83 +473,17 @@ pub const Term = struct {
         }
 
         if (cur_fg != .default or cur_bg != .default or !cur_attrs.eql(.{})) {
-            try emit(a, sgr.reset);
+            try emit(arena, sgr.reset);
         }
 
-        const end = a.get_pos();
+        const end = arena.get_pos();
         if (end > start) {
-            try self.tty.writeAll(a.memory[start..end]);
+            try self.tty.writeAll(arena.memory[start..end]);
         }
 
         const tmp = self.front;
         self.front = self.back;
         self.back = tmp;
-    }
-
-    fn emit(arena: *Arena, bytes: []const u8) Arena.AllocError!void {
-        const dest = try arena.push(bytes.len);
-        @memcpy(dest, bytes);
-    }
-
-    fn emit_fmt(arena: *Arena, comptime fmt: []const u8, args: anytype) Arena.AllocError!void {
-        var tmp: [64]u8 = undefined;
-        const s = std.fmt.bufPrint(&tmp, fmt, args) catch unreachable;
-        try emit(arena, s);
-    }
-
-    fn emit_cup(arena: *Arena, row: u16, col: u16) Arena.AllocError!void {
-        try emit_fmt(arena, "\x1b[{};{}H", .{ @as(u32, row) + 1, @as(u32, col) + 1 });
-    }
-
-    fn emit_sgr(arena: *Arena, cell: Cell, cur_fg: *Color, cur_bg: *Color, cur_attrs: *Attrs) Arena.AllocError!void {
-        const need_reset = (cur_attrs.bold and !cell.attrs.bold) or
-            (cur_attrs.dim and !cell.attrs.dim) or
-            (cur_attrs.italic and !cell.attrs.italic) or
-            (cur_attrs.underline and !cell.attrs.underline) or
-            (cur_attrs.reverse and !cell.attrs.reverse) or
-            (cur_attrs.strikethrough and !cell.attrs.strikethrough);
-
-        if (need_reset) {
-            try emit(arena, sgr.reset);
-            cur_fg.* = .default;
-            cur_bg.* = .default;
-            cur_attrs.* = .{};
-        }
-
-        if (cell.attrs.bold and !cur_attrs.bold) try emit(arena, sgr.bold);
-        if (cell.attrs.dim and !cur_attrs.dim) try emit(arena, sgr.dim);
-        if (cell.attrs.italic and !cur_attrs.italic) try emit(arena, sgr.italic);
-        if (cell.attrs.underline and !cur_attrs.underline) try emit(arena, sgr.underline);
-        if (cell.attrs.reverse and !cur_attrs.reverse) try emit(arena, sgr.reverse);
-        if (cell.attrs.strikethrough and !cur_attrs.strikethrough) try emit(arena, sgr.strikethrough);
-        cur_attrs.* = cell.attrs;
-
-        if (!cell.fg.eql(cur_fg.*)) {
-            try emit_color(arena, cell.fg, false);
-            cur_fg.* = cell.fg;
-        }
-        if (!cell.bg.eql(cur_bg.*)) {
-            try emit_color(arena, cell.bg, true);
-            cur_bg.* = cell.bg;
-        }
-    }
-
-    fn emit_color(arena: *Arena, color: Color, is_bg: bool) Arena.AllocError!void {
-        const ext = @as(u8, if (is_bg) sgr.bg_extended else sgr.fg_extended);
-        switch (color) {
-            .default => try emit(arena, if (is_bg) sgr.default_bg else sgr.default_fg),
-            .ansi => |v| {
-                const n = @intFromEnum(v);
-                if (n < 8) {
-                    try emit_fmt(arena, "\x1b[{}m", .{(if (is_bg) sgr.bg_base else sgr.fg_base) + n});
-                } else if (n < 16) {
-                    try emit_fmt(arena, "\x1b[{}m", .{(if (is_bg) sgr.bright_bg_base else sgr.bright_fg_base) + n - 8});
-                } else {
-                    try emit_fmt(arena, "\x1b[{};5;{}m", .{ ext, n });
-                }
-            },
-            .rgb => |v| try emit_fmt(arena, "\x1b[{};2;{};{};{}m", .{ ext, v[0], v[1], v[2] }),
-        }
     }
 
     // -- Input parsing ------------------------------------------------------
@@ -579,6 +525,76 @@ pub const Term = struct {
         return null;
     }
 };
+
+// ---------------------------------------------------------------------------
+// ANSI output helpers
+// ---------------------------------------------------------------------------
+
+fn emit(arena: *Arena, bytes: []const u8) Arena.AllocError!void {
+    const dest = try arena.push(bytes.len);
+    @memcpy(dest, bytes);
+}
+
+fn emit_fmt(arena: *Arena, comptime fmt: []const u8, args: anytype) Arena.AllocError!void {
+    var tmp: [64]u8 = undefined;
+    const s = std.fmt.bufPrint(&tmp, fmt, args) catch unreachable;
+    try emit(arena, s);
+}
+
+fn emit_cup(arena: *Arena, row: u16, col: u16) Arena.AllocError!void {
+    try emit_fmt(arena, "\x1b[{};{}H", .{ @as(u32, row) + 1, @as(u32, col) + 1 });
+}
+
+fn emit_sgr(arena: *Arena, cell: Cell, cur_fg: *Color, cur_bg: *Color, cur_attrs: *Attrs) Arena.AllocError!void {
+    const need_reset = (cur_attrs.bold and !cell.attrs.bold) or
+        (cur_attrs.dim and !cell.attrs.dim) or
+        (cur_attrs.italic and !cell.attrs.italic) or
+        (cur_attrs.underline and !cell.attrs.underline) or
+        (cur_attrs.reverse and !cell.attrs.reverse) or
+        (cur_attrs.strikethrough and !cell.attrs.strikethrough);
+
+    if (need_reset) {
+        try emit(arena, sgr.reset);
+        cur_fg.* = .default;
+        cur_bg.* = .default;
+        cur_attrs.* = .{};
+    }
+
+    if (cell.attrs.bold and !cur_attrs.bold) try emit(arena, sgr.bold);
+    if (cell.attrs.dim and !cur_attrs.dim) try emit(arena, sgr.dim);
+    if (cell.attrs.italic and !cur_attrs.italic) try emit(arena, sgr.italic);
+    if (cell.attrs.underline and !cur_attrs.underline) try emit(arena, sgr.underline);
+    if (cell.attrs.reverse and !cur_attrs.reverse) try emit(arena, sgr.reverse);
+    if (cell.attrs.strikethrough and !cur_attrs.strikethrough) try emit(arena, sgr.strikethrough);
+    cur_attrs.* = cell.attrs;
+
+    if (!cell.fg.eql(cur_fg.*)) {
+        try emit_color(arena, cell.fg, false);
+        cur_fg.* = cell.fg;
+    }
+    if (!cell.bg.eql(cur_bg.*)) {
+        try emit_color(arena, cell.bg, true);
+        cur_bg.* = cell.bg;
+    }
+}
+
+fn emit_color(arena: *Arena, color: Color, is_bg: bool) Arena.AllocError!void {
+    const ext = @as(u8, if (is_bg) sgr.bg_extended else sgr.fg_extended);
+    switch (color) {
+        .default => try emit(arena, if (is_bg) sgr.default_bg else sgr.default_fg),
+        .ansi => |v| {
+            const n = @intFromEnum(v);
+            if (n < 8) {
+                try emit_fmt(arena, "\x1b[{}m", .{(if (is_bg) sgr.bg_base else sgr.fg_base) + n});
+            } else if (n < 16) {
+                try emit_fmt(arena, "\x1b[{}m", .{(if (is_bg) sgr.bright_bg_base else sgr.bright_fg_base) + n - 8});
+            } else {
+                try emit_fmt(arena, "\x1b[{};5;{}m", .{ ext, n });
+            }
+        },
+        .rgb => |v| try emit_fmt(arena, "\x1b[{};2;{};{};{}m", .{ ext, v[0], v[1], v[2] }),
+    }
+}
 
 const ParseResult = struct {
     event: ?InputEvent,
@@ -856,7 +872,7 @@ fn query_size(fd: posix.fd_t) struct { cols: u16, rows: u16 } {
     };
 }
 
-fn codepoint_width(cp: u21) u16 {
+pub fn codepoint_width(cp: u21) u16 {
     if (cp == 0) return 0;
     if (cp < 0x20) return 0;
     if (cp == 0x7f) return 0;

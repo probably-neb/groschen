@@ -1,7 +1,6 @@
 const std = @import("std");
 const ui = @import("ui.zig");
-const tui = @import("tui");
-const term = tui.term;
+const term = @import("term");
 const base = @import("base");
 const Arena = base.Arena;
 
@@ -173,11 +172,20 @@ pub fn process_events(root: *ui.Box) void {
 }
 
 fn update_hot_box(root: *ui.Box) void {
+    var hot_pos = state.mouse_pos;
+    var ev = state.events.first;
+    while (ev) |e| : (ev = e.next) {
+        if (e.kind == .mouse_press) {
+            hot_pos = e.pos;
+            break;
+        }
+    }
+
     var result: ui.Key = ui.Key.zero;
     var node: ?*ui.Box = root;
     while (node) |n| {
         if (n.flags.clickable and !n.flags.disabled and
-            n.rect.contains(state.mouse_pos[0], state.mouse_pos[1]))
+            n.rect.contains(hot_pos[0], hot_pos[1]))
         {
             result = n.key;
         }

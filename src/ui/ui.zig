@@ -1,11 +1,13 @@
 const std = @import("std");
 const base = @import("base");
 const Arena = base.Arena;
+const term = @import("term");
 
 const assert = std.debug.assert;
 
 pub const layout_mod = @import("layout.zig");
 pub const interaction = @import("interaction.zig");
+pub const render = @import("render.zig");
 
 // ---------------------------------------------------------------------------
 // Key
@@ -86,53 +88,11 @@ fn find_separator(string: []const u8) ?Separator {
 }
 
 // ---------------------------------------------------------------------------
-// Color
+// Color — re-exported from term (single source of truth)
 // ---------------------------------------------------------------------------
 
-pub const Ansi = enum(u8) {
-    black = 0,
-    red = 1,
-    green = 2,
-    yellow = 3,
-    blue = 4,
-    magenta = 5,
-    cyan = 6,
-    white = 7,
-    bright_black = 8,
-    bright_red = 9,
-    bright_green = 10,
-    bright_yellow = 11,
-    bright_blue = 12,
-    bright_magenta = 13,
-    bright_cyan = 14,
-    bright_white = 15,
-    _,
-};
-
-pub const Color = union(enum) {
-    default,
-    ansi: Ansi,
-    rgb: [3]u8,
-
-    pub fn eql(a: Color, b: Color) bool {
-        const tag_a: u2 = switch (a) {
-            .default => 0,
-            .ansi => 1,
-            .rgb => 2,
-        };
-        const tag_b: u2 = switch (b) {
-            .default => 0,
-            .ansi => 1,
-            .rgb => 2,
-        };
-        if (tag_a != tag_b) return false;
-        return switch (a) {
-            .default => true,
-            .ansi => |v| @intFromEnum(v) == @intFromEnum(b.ansi),
-            .rgb => |v| v[0] == b.rgb[0] and v[1] == b.rgb[1] and v[2] == b.rgb[2],
-        };
-    }
-};
+pub const Ansi = term.Ansi;
+pub const Color = term.Color;
 
 // ---------------------------------------------------------------------------
 // Axis / TextAlign
@@ -930,6 +890,10 @@ pub fn arena_print(comptime fmt: []const u8, args: anytype) ![]const u8 {
 // ---------------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------------
+
+test {
+    std.testing.refAllDecls(@This());
+}
 
 test "Stack push/pop/top" {
     var s = Stack(i32).init(0);

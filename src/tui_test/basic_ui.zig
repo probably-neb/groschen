@@ -1,16 +1,12 @@
 const std = @import("std");
 const base = @import("base");
 const Arena = base.Arena;
-const tui = @import("tui");
-const Term = tui.term.Term;
-const Attrs = tui.term.Attrs;
+const term = @import("term");
 const ui = @import("ui");
 const Box = ui.Box;
 const BoxFlags = ui.BoxFlags;
 const Size = ui.Size;
-const Rect = ui.Rect;
 const Color = ui.Color;
-const Signal = ui.Signal;
 const interaction = ui.interaction;
 
 // ---------------------------------------------------------------------------
@@ -274,135 +270,10 @@ fn handle_all_signals(app: *App, br: *const BuildResult) void {
 }
 
 // ---------------------------------------------------------------------------
-// Draw pass (kept until Phase 4 draw.zig exists)
-// ---------------------------------------------------------------------------
-
-fn draw_tree(t: *Term, root: *Box, app: *const App) void {
-    draw_box(t, root, app);
-}
-
-fn draw_box(t: *Term, b: *Box, app: *const App) void {
-    const r = b.rect;
-    if (r.w == 0 or r.h == 0) return;
-
-    const is_focused = !b.key.is_zero() and interaction.get_focus_hot_key().eql(b.key);
-    const is_hot = b.hot_t > 0;
-    const is_active = b.active_t > 0;
-
-    if (b.flags.draw_background) {
-        const bg_color = to_term_color(if (is_active and b.flags.draw_active_effects)
-            app.theme.active_bg()
-        else if (is_hot and b.flags.draw_hot_effects)
-            app.theme.hot_bg()
-        else
-            b.bg_color);
-
-        t.fill_rect(r.col, r.row, r.w, r.h, .{ .bg = bg_color });
-    }
-
-    if (b.flags.draw_border) {
-        const border_c = to_term_color(if (is_focused) app.theme.accent() else b.border_color);
-        draw_border(t, r, b.flags, border_c, is_focused);
-    }
-
-    if (b.flags.draw_text and b.display_string.len > 0) {
-        const text_col = r.col +| (if (b.flags.draw_border and b.flags.draw_side_left) @as(u16, 1) else 0) +| b.text_padding;
-        const top_inset: u16 = if (b.flags.draw_border and b.flags.draw_side_top) 1 else 0;
-        const bot_inset: u16 = if (b.flags.draw_border and b.flags.draw_side_bottom) 1 else 0;
-        const inner_h = r.h -| top_inset -| bot_inset;
-        const text_row = r.row +| top_inset +| (inner_h -| 1) / 2;
-        const side_inset: u16 = (if (b.flags.draw_border and b.flags.draw_side_left) @as(u16, 1) else 0) +
-            (if (b.flags.draw_border and b.flags.draw_side_right) @as(u16, 1) else 0) +
-            b.text_padding * 2;
-        const text_w = r.w -| side_inset;
-
-        const fg = to_term_color(b.fg_color);
-        const bg = to_term_color(if (is_active and b.flags.draw_active_effects)
-            app.theme.active_bg()
-        else if (is_hot and b.flags.draw_hot_effects)
-            app.theme.hot_bg()
-        else if (b.flags.draw_background)
-            b.bg_color
-        else
-            app.theme.bg());
-        const attrs: Attrs = if (is_focused) .{ .bold = true } else .{};
-
-        const tag = ui.parse_tag(b.display_string);
-        _ = t.write_text(text_col, text_row, text_w, tag.display, fg, bg, attrs);
-    }
-
-    var child = b.first;
-    while (child) |c| : (child = c.next) {
-        draw_box(t, c, app);
-    }
-}
-
-fn draw_border(t: *Term, r: Rect, flags: BoxFlags, border_color: tui.term.Color, focused: bool) void {
-    const top = flags.draw_side_top;
-    const bottom = flags.draw_side_bottom;
-    const left = flags.draw_side_left;
-    const right = flags.draw_side_right;
-    const attrs: Attrs = if (focused) .{ .bold = true } else .{};
-
-    const x1 = r.col;
-    const y1 = r.row;
-    const x2 = r.col +| r.w -| 1;
-    const y2 = r.row +| r.h -| 1;
-
-    if (top) {
-        var x = x1;
-        while (x <= x2) : (x +|= 1) {
-            const cp: u21 = if (x == x1 and left) (if (focused) '╔' else '┌') else if (x == x2 and right) (if (focused) '╗' else '┐') else (if (focused) '═' else '─');
-            if (t.cell_at(x, y1)) |cell| {
-                cell.* = .{ .codepoint = cp, .fg = border_color, .attrs = attrs };
-            }
-        }
-    }
-
-    if (bottom and r.h > 1) {
-        var x = x1;
-        while (x <= x2) : (x +|= 1) {
-            const cp: u21 = if (x == x1 and left) (if (focused) '╚' else '└') else if (x == x2 and right) (if (focused) '╝' else '┘') else (if (focused) '═' else '─');
-            if (t.cell_at(x, y2)) |cell| {
-                cell.* = .{ .codepoint = cp, .fg = border_color, .attrs = attrs };
-            }
-        }
-    }
-
-    if (left and r.h > 1) {
-        var y = y1 + 1;
-        const y_end = if (bottom) y2 else y2 + 1;
-        while (y < y_end) : (y += 1) {
-            if (t.cell_at(x1, y)) |cell| {
-                cell.* = .{ .codepoint = if (focused) '║' else '│', .fg = border_color, .attrs = attrs };
-            }
-        }
-    }
-
-    if (right and r.h > 1) {
-        var y = y1 + 1;
-        const y_end = if (bottom) y2 else y2 + 1;
-        while (y < y_end) : (y += 1) {
-            if (t.cell_at(x2, y)) |cell| {
-                cell.* = .{ .codepoint = if (focused) '║' else '│', .fg = border_color, .attrs = attrs };
-            }
-        }
-    }
-}
-
-fn to_term_color(c: Color) tui.term.Color {
-    return switch (c) {
-        .default => .default,
-        .ansi => |a| .{ .ansi = @enumFromInt(@intFromEnum(a)) },
-        .rgb => |v| .{ .rgb = v },
-    };
-}
-
-// ---------------------------------------------------------------------------
 // Entry point
 // ---------------------------------------------------------------------------
 
-fn is_quit(ev: tui.term.InputEvent) bool {
+fn is_quit(ev: term.InputEvent) bool {
     switch (ev) {
         .key => |ke| {
             if (ke.key == .escape) return true;
@@ -424,7 +295,7 @@ pub fn run() !void {
     try ui.init_all();
     defer ui.deinit();
 
-    var t = try Term.init(&perm_arena);
+    var t = try term.init(&perm_arena);
     defer t.deinit();
 
     var app: App = .{};
@@ -469,7 +340,8 @@ pub fn run() !void {
         handle_all_signals(&app, &br);
 
         // -- Draw -----------------------------------------------------------
-        draw_tree(&t, root, &app);
+        var grid = term.draw.Grid.from_term(&t);
+        ui.render.render(&grid, root);
         try t.flush();
     }
 }

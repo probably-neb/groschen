@@ -547,26 +547,63 @@ Unit test in `src/ui/layout.zig`:
 
 ---
 
-## Phase 4: TUI Draw Layer
+## Phase 4: TUI Draw Layer ✅
 
 **Goal**: Walk the computed box tree and render it into the cell grid from Phase 1.
 
-**Files**: `src/tui/draw.zig`
+**Files**: `src/tui/draw.zig` (grid primitives, color effects, text measurement),
+`src/ui/render.zig` (tree walk, box rendering)
 
-### 4.1 — Tree Walk
+Split across two modules: `draw.zig` lives in the `tui` layer and provides low-level
+grid operations that know nothing about UI boxes. `render.zig` lives in the `ui` layer,
+walks the box tree, and calls into `draw` primitives.
 
-Depth-first post-order walk of the box tree (same as raddbg). For each box, interpret
-its flags and fill the corresponding region of the cell grid.
+Also unified the color type — `ui.Color` and `ui.Ansi` are now re-exports of
+`tui.term.Color` / `tui.term.Ansi` instead of separate duplicate definitions.
+Moved `Term.init` and the `emit*` ANSI helpers from methods to free functions
+(aligning with the project style of preferring free functions over methods).
+Removed inline draw code from demo apps (`basic_ui.zig`, `scroll.zig`) — they now
+call `ui.render.render(&grid, root)` with a `tui.draw.Grid.from_term(&t)`.
 
-### 4.2 — Background Fill
+### 4.1 — Grid Primitives (`src/tui/draw.zig`)
 
-`draw_background` flag → fill `box.rect` region with `box.bg_color`. If `hot_t > 0`,
-blend/brighten. If `active_t > 0`, darken or invert.
+`Grid` struct: a plain data view over a `[]Cell` buffer with `cols`/`rows`. Constructed
+from a `Term` via `Grid.from_term(&t)` (borrows the back buffer).
 
-### 4.3 — Border Rendering
+Free functions on `Grid`:
+- `cell_at(grid, col, row) → ?*Cell` — bounds-checked single cell access
+- `write_cell(grid, col, row, cell)` — write a single cell (no-op if out of bounds)
+- `fill_rect(grid, col, row, w, h, cell)` — fill a rectangular region, clamped to bounds
+
+Also in `draw.zig`:
+- `brighten_color(color, amount) → Color` — brightens RGB by `amount * 80` per channel
+  (clamped to 255); promotes dark ANSI colors (0–7) to bright (8–15)
+- `text_display_width(text) → u16` — UTF-8 aware display width
+- `codepoint_width(cp) → u16` — single codepoint width (0 for control, 2 for CJK/wide, 1 otherwise)
+- `grid_to_string(grid, buf) → []const u8` — test helper, dumps grid to printable string
+
+### 4.2 — Tree Walk (`src/ui/render.zig`)
+
+Pre-order depth-first walk (parent drawn first, children overlay on top). A `RenderCtx`
+carries the grid pointer, a fixed-size clip stack (max 64 deep), and a deferred floating
+box list (max 64). The public entry point is `render(grid, root)`.
+
+For each box: skip if zero-sized, defer if floating (unless already at top level),
+then draw background → border → text in order. After drawing, if `clip` flag is set,
+push the box rect as a clip, recurse into children, then pop.
+
+### 4.3 — Background Fill
+
+`draw_background` flag → fill `box.rect` with `box.bg_color`, intersected with the
+current clip rect. If `active_t > 0` and `draw_active_effects`, brighten bg by
+`active_t * 0.3`. Else if `hot_t > 0` and `draw_hot_effects`, brighten bg by
+`hot_t * 0.15`.
+
+### 4.4 — Border Rendering
 
 `draw_border` flag → write box-drawing characters along edges of `box.rect`:
 
+Normal borders:
 ```
 ┌──────┐
 │      │    Uses: ─ │ ┌ ┐ └ ┘
@@ -574,46 +611,63 @@ blend/brighten. If `active_t > 0`, darken or invert.
 └──────┘
 ```
 
-Individual side flags (`draw_side_top`, etc.) allow partial borders (e.g. just a top separator line).
+Focused borders (`focus_hot_t > 0.5`) use double-line characters with bold attribute:
+```
+╔══════╗
+║      ║    Uses: ═ ║ ╔ ╗ ╚ ╝
+║      ║
+╚══════╝
+```
 
-When two borders are adjacent, resolve junction characters:
-- T-junctions: ├ ┤ ┬ ┴
-- Cross: ┼
+Individual side flags (`draw_side_top`, etc.) allow partial borders (e.g. just a top
+separator line). Corner characters are only placed when both adjacent sides are drawn.
+Hot effect brightens `border_color` by 0.2.
 
-For a single-height box with a border, the box is at minimum 1 row (the border itself
-consumes space). Content is inside the border.
-
-### 4.4 — Text Rendering
+### 4.5 — Text Rendering
 
 `draw_text` flag → write `box.display_string` into the cell grid within `box.rect`:
-- Apply `text_padding` (offset from left/right edge)
-- Apply `text_align` (left/center/right)
-- Truncate if text is wider than available space; append `…` if truncated
-- Apply `box.fg_color` and current `box.bg_color` to each cell
-- Handle wide characters (CJK/emoji take 2 columns)
+- Compute inner area by subtracting border insets (if border sides are drawn) and `text_padding`
+- Vertically center text within the inner area
+- Apply `text_align` (left/center/right) to determine starting column
+- Iterate codepoints with `codepoint_width` for accurate column tracking
+- Truncate if text is wider than available space; write `…` (U+2026) at the cutoff point
+- Wide characters (CJK/emoji, 2 columns) write a zero-codepoint spacer in the second cell
+- Apply `box.fg_color`; bg inherits from `box.bg_color` if `draw_background` is set
+- Hot/active: brighten bg, set bold attribute
+- Focused (`focus_hot_t > 0.5`): bold attribute
 
-### 4.5 — Clip Stack
+### 4.6 — Clip Stack
 
-`clip` flag → push `box.rect` as a clip rectangle. All child drawing is clamped to
-this rectangle. Clip rects are intersected (nested clips narrow the visible area).
-Pop when leaving the box's subtree.
+`clip` flag → push `Rect.intersect(current_clip, box.rect)` onto the clip stack. All
+child drawing is clamped to this rectangle via `clipped_write` and `clipped_fill` helpers.
+Pop when leaving the box's subtree. Stack initialized with a full-screen clip rect.
 
-### 4.6 — Hot/Active Effects
+### 4.7 — Hot/Active Effects
 
-- `draw_hot_effects` + `hot_t > 0` → bold text, brighter bg, or reverse video
-- `draw_active_effects` + `active_t > 0` → reverse video or distinct bg color
-- These are simple attribute modifications applied on top of the base style
+- `draw_hot_effects` + `hot_t > 0` → brighten bg by `hot_t * 0.15`, bold text
+- `draw_active_effects` + `active_t > 0` → brighten bg by `active_t * 0.3`, bold text
+- Active takes priority over hot (else-if, not both)
+- These are applied in both `render_background` and `render_text`
 
-### 4.7 — Floating Boxes
+### 4.8 — Floating Boxes
 
-Floating boxes (tooltips, context menus) are drawn last, on top of everything else.
-They use absolute positioning and should be clamped to screen bounds.
+Floating boxes (`floating_x` or `floating_y`) encountered during the tree walk are
+deferred into the `RenderCtx.floating` array. After the main tree walk completes, they
+are rendered in order with the clip stack reset to a full-screen rect so they draw on
+top of everything.
 
-### 4.8 — Validation
+### 4.9 — Validation
 
-Visual test: build a tree with nested rows/columns, borders, colored backgrounds, and
-text. Render to grid. Verify grid contents match expected output (write a `grid_to_string`
-helper for test assertions).
+Unit tests in both `draw.zig` and `render.zig`:
+- `draw.zig`: `cell_at` bounds, `write_cell`, `fill_rect` with clamping,
+  `grid_to_string`, `text_display_width`, `codepoint_width`, `brighten_color` (RGB,
+  ANSI promotion, default passthrough, clamp to 255)
+- `render.zig`: background fills rect, border renders box-drawing characters, text
+  left/center/right alignment, truncation with ellipsis, clip restricts child drawing,
+  border with text inside, children draw on top of parent, partial border (top-only)
+
+Demo apps (`basic_ui.zig`, `scroll.zig`) updated to use the new render system as
+end-to-end validation.
 
 ---
 
@@ -628,37 +682,39 @@ helper for test assertions).
 ```
 pub fn run() !void {
     // init terminal backend
-    var term = try Term.init();
-    defer term.deinit();
+    var t = try term.init(&arena);
+    defer t.deinit();
 
     // init UI state
-    var ui = try UiState.init(&arena);
+    try ui.init_all();
+    defer ui.deinit();
 
     var running = true;
     while (running) {
         // 1. poll input
-        const events = try term.poll_events(&arena);
+        const event = try t.poll_event(timeout_ms);
 
         // 2. convert to UI events
-        var ui_events = convert_events(events);
+        ui.interaction.convert_event(event);
 
         // 3. begin build
-        ui.begin_build(term.size(), &ui_events, dt);
+        ui.begin_build(t.cols, t.rows, dt);
 
         // 4. application builds UI
-        app_build(&ui);
+        app_build();
 
         // 5. end build (layout)
-        ui.end_build();
+        const root = ui.end_build();
 
         // 6. draw to cell grid
-        ui_draw.draw_tree(ui.root(), &term.grid);
+        var grid = tui.draw.Grid.from_term(&t);
+        ui.render.render(&grid, root);
 
         // 7. flush (diff + write)
-        try term.flush();
+        try t.flush();
 
         // 8. wait for next event or timeout
-        if (!ui.animating()) term.wait_for_input();
+        if (!ui.animating()) t.wait_for_input();
     }
 }
 ```
@@ -725,52 +781,52 @@ Phase 1: Terminal Backend ✅ ─┐
                               │
 Phase 2: UI Core ✅ ──────────┤
                               │
-Phase 3: Interaction ─────────┤ (depends on 2, 1 for events)
+Phase 3: Interaction ✅ ──────┤ (depends on 2, 1 for events)
                               │
-Phase 4: TUI Draw Layer ──────┤ (depends on 1, 2)
+Phase 4: TUI Draw Layer ✅ ───┤ (depends on 1, 2, 3 for focus)
                               │
 Phase 5: Frame Loop ──────────┤ (depends on all above)
                               │
 Phase 6: Widget Submodule ────┘ (depends on 5)
 ```
 
-Phases 3 and 4 can be developed in parallel — interaction needs event types from Phase 1
-and box types from Phase 2, while the draw layer needs the cell grid from Phase 1 and
-computed rects from Phase 2. Phase 5 integrates everything. Phase 6 builds convenience
-widgets on top of the working frame loop.
+Phases 3 and 4 were developed roughly in parallel. Phase 4 ended up depending on
+Phase 3's `focus_hot_t` for focused-border styling. Phase 5 integrates everything.
+Phase 6 builds convenience widgets on top of the working frame loop.
 
 ---
 
 ## File Layout
 
 ```
-src/ui/                          # ui build module — rendering-agnostic
+src/ui/                          # ui build module
 ├── ui.zig                       # Root: types, stacks, state, box construction
 ├── layout.zig                   # 5-pass layout algorithm
 ├── interaction.zig              # Event processing, signal_from_box, focus nav
+├── render.zig                   # Box tree → grid rendering (clip, bg, border, text)
 └── widgets.zig                  # button, label, line_edit, etc. (Phase 6, not yet created)
 
 src/tui/                         # tui build module — terminal-specific
-├── tui.zig                      # Root: public API, frame loop, init/deinit
+├── tui.zig                      # Root: re-exports term and draw
 ├── term.zig                     # Terminal backend (raw mode, input, cell grid, flush)
-├── draw.zig                     # Box tree → cell grid rendering
+├── draw.zig                     # Grid primitives, color effects, text measurement
 ├── RADDBG_UI_REPORT.md          # Architecture analysis (reference)
 └── IMPLEMENTATION_PLAN.md       # This file
 
 src/tui_test/                    # tui_test build module — interactive test apps
 ├── tui_test.zig                 # Entry point: dispatches on CLI arg to test runners
 ├── grid.zig                     # Phase 1 validation: checkerboard + cursor movement
-├── basic_ui.zig                 # Phase 2–3 validation: counters, focus, theme toggle
-└── scroll.zig                   # Phase 3 validation: virtualized scroll list, selection
+├── basic_ui.zig                 # Phase 2–4 validation: counters, focus, theme toggle
+└── scroll.zig                   # Phase 3–4 validation: virtualized scroll list, selection
 ```
 
-The split across two build modules is intentional. The `ui` module has zero knowledge of
-the terminal and operates purely on abstract cell coordinates — it could back a GUI just
-as easily. Within `ui`, the core files (Phases 2–5) provide the box-building and layout
-engine, while `widgets.zig` (Phase 6) is a submodule of convenience helpers built on
-that core. The `tui` module imports `ui` and provides the terminal-specific bridge:
-`term.zig` handles raw I/O, `draw.zig` interprets box flags into cell grid writes, and
-`tui.zig` orchestrates the frame loop. The application imports both modules.
+The split across two build modules is intentional. The `ui` module knows about terminal
+types only through `tui.term.Color` (re-exported as `ui.Color`), which serves as the
+single color type across both layers. `render.zig` lives in `ui` because it operates on
+box-tree semantics and clip rects — it calls into `tui.draw` only for low-level grid
+writes. The `tui` module provides the terminal-specific bridge: `term.zig` handles raw
+I/O, `draw.zig` provides grid primitives and color utilities, and `tui.zig` re-exports
+both. The application imports both modules.
 
 The `tui_test` module is a separate executable (`zig build testing -- <name>`) containing
 interactive test/demo applications. Each test is a standalone file with a `run()` function,
@@ -799,14 +855,6 @@ Rather than raddbg's mdesk code generation, use Zig's comptime to generate the ~
 stacks from a declaration tuple. Each stack is a fixed-capacity array (e.g. 64 entries) stored
 inline in the `State` struct — no heap allocation, no pointers to chase.
 
-### Color Strategy
-
-The `ui` module uses an abstract `Color` type (default, indexed, RGB). The `tui` module's
-draw layer maps these to actual terminal escape sequences. Support all three tiers:
-16-color ANSI, 256-color, and 24-bit truecolor. Detect terminal capability via `COLORTERM`
-env var (or similar). The theme system maps semantic colors (e.g. "button background",
-"focused border") to `Color` values. Applications set semantic colors; the `tui` draw
-layer resolves them to terminal colors.
 
 ### No Threads
 

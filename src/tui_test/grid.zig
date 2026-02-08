@@ -1,13 +1,12 @@
 const base = @import("base");
-const tui = @import("tui");
-const Term = tui.term.Term;
-const Color = tui.term.Color;
+const term = @import("term");
+const Color = term.Color;
 
 pub fn run() !void {
     var arena = try base.Arena.init(.{});
     defer arena.deinit();
 
-    var t = try Term.init(&arena);
+    var t = try term.init(&arena);
     defer t.deinit();
 
     var cursor_col: u16 = 0;

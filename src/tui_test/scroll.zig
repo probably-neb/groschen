@@ -1,9 +1,7 @@
 const std = @import("std");
 const base = @import("base");
 const Arena = base.Arena;
-const tui = @import("tui");
-const Term = tui.term.Term;
-const Attrs = tui.term.Attrs;
+const term = @import("term");
 const ui = @import("ui");
 const Box = ui.Box;
 const BoxFlags = ui.BoxFlags;
@@ -31,12 +29,11 @@ const App = struct {
 const bg_color: Color = .{ .ansi = .black };
 const fg_color: Color = .{ .ansi = .white };
 const accent_color: Color = .{ .ansi = .cyan };
-const muted_color: Color = .{ .ansi = .bright_black };
-const header_bg: Color = .{ .rgb = .{ 30, 60, 90 } };
+
 const even_bg: Color = .{ .rgb = .{ 25, 25, 35 } };
 const odd_bg: Color = .{ .rgb = .{ 35, 35, 45 } };
 const selected_bg: Color = .{ .rgb = .{ 50, 50, 90 } };
-const hot_bg: Color = .{ .rgb = .{ 60, 60, 80 } };
+
 const scrollbar_bg: Color = .{ .rgb = .{ 40, 40, 50 } };
 const scrollbar_fg: Color = .{ .ansi = .bright_white };
 
@@ -246,65 +243,10 @@ fn apply_scroll(app: *App, delta: i32, visible_rows: u32) void {
 }
 
 // ---------------------------------------------------------------------------
-// Draw pass
-// ---------------------------------------------------------------------------
-
-fn draw_tree(t: *Term, root: *Box) void {
-    draw_box(t, root);
-}
-
-fn draw_box(t: *Term, b: *Box) void {
-    const r = b.rect;
-    if (r.w == 0 or r.h == 0) return;
-
-    const is_focused = !b.key.is_zero() and interaction.get_focus_hot_key().eql(b.key);
-    const is_hot = b.hot_t > 0;
-
-    if (b.flags.draw_background) {
-        var bg = to_term_color(b.bg_color);
-        if (is_hot and b.flags.draw_hot_effects) bg = to_term_color(hot_bg);
-        t.fill_rect(r.col, r.row, r.w, r.h, .{ .bg = bg });
-    }
-
-    if (b.flags.draw_text and b.display_string.len > 0) {
-        const text_col = r.col +| b.text_padding;
-        const text_w = r.w -| b.text_padding *| 2;
-        const text_row = r.row;
-
-        const fg = to_term_color(b.fg_color);
-        var bg = to_term_color(b.bg_color);
-        if (is_hot and b.flags.draw_hot_effects) bg = to_term_color(hot_bg);
-
-        const tag = ui.parse_tag(b.display_string);
-        const attrs: Attrs = if (is_focused) .{ .bold = true } else .{};
-        _ = t.write_text(text_col, text_row, text_w, tag.display, fg, bg, attrs);
-    }
-
-    // Focus indicator: highlight border of focused scroll container
-    if (is_focused and r.w > 0 and r.h > 0) {
-        const border_c = to_term_color(accent_color);
-        if (t.cell_at(r.col, r.row)) |cell| cell.* = .{ .codepoint = '▌', .fg = border_c };
-    }
-
-    var child = b.first;
-    while (child) |c| : (child = c.next) {
-        draw_box(t, c);
-    }
-}
-
-fn to_term_color(c: Color) tui.term.Color {
-    return switch (c) {
-        .default => .default,
-        .ansi => |a| .{ .ansi = @enumFromInt(@intFromEnum(a)) },
-        .rgb => |v| .{ .rgb = v },
-    };
-}
-
-// ---------------------------------------------------------------------------
 // Entry point
 // ---------------------------------------------------------------------------
 
-fn is_quit(ev: tui.term.InputEvent) bool {
+fn is_quit(ev: term.InputEvent) bool {
     switch (ev) {
         .key => |ke| {
             if (ke.key == .escape) return true;
@@ -326,7 +268,7 @@ pub fn run() !void {
     try ui.init_all();
     defer ui.deinit();
 
-    var t = try Term.init(&perm_arena);
+    var t = try term.init(&perm_arena);
     defer t.deinit();
 
     var app: App = .{};
@@ -373,7 +315,8 @@ pub fn run() !void {
         handle_signals(&app, &br, visible_rows);
 
         // -- Draw -----------------------------------------------------------
-        draw_tree(&t, root);
+        var grid = term.draw.Grid.from_term(&t);
+        ui.render.render(&grid, root);
         try t.flush();
     }
 }
