@@ -37,48 +37,68 @@ Both modules are declared in `build.zig` alongside `base` and `bin`:
 ```zig
 const module_specs = [_]ModuleSpec{
     .{ .name = "bin", .path = "src/bin/bin.zig" },
+    .{ .name = "tui_test", .path = "src/tui_test/tui_test.zig" },
     .{ .name = "tui", .path = "src/tui/tui.zig" },
     .{ .name = "ui",  .path = "src/ui/ui.zig" },
     .{ .name = "base", .path = "src/base/base.zig" },
 };
 ```
 
+The `tui_test` module is a separate executable for interactive test/demo applications.
+Run with `zig build testing -- <name>` (e.g. `zig build testing -- grid`).
+
 ---
 
-## Phase 1: Terminal Backend
+## Phase 1: Terminal Backend ✅
 
 **Goal**: Own the terminal. Enter/exit alternate screen + raw mode cleanly, detect size,
 parse input, and flush a cell grid to the screen with minimal I/O.
 
-**Files**: `src/tui/term.zig`
+**Files**: `src/tui/term.zig`, `src/tui_test/tui_test.zig`, `src/tui_test/grid.zig`
+
+**Status**: Complete.
 
 ### 1.1 — Raw Mode & Alternate Screen
 
-- Save and restore original termios state
-- Enter raw mode (disable echo, canonical mode, signal generation)
-- Enter alternate screen (`\x1b[?1049h`) on init, exit (`\x1b[?1049l`) on deinit
-- Hide cursor on init, show on deinit
-- Ensure cleanup runs on panic / signal (SIGINT, SIGTERM) via a global handler or `defer`
+`Term.init(arena)` opens `/dev/tty` (falls back to stdin), saves the original termios,
+and enters raw mode by disabling ECHO, ICANON, IEXTEN, ISIG, ICRNL, IXON, OPOST and
+setting CS8 / VMIN=0 / VTIME=0. A composite `mode.enter_all` escape string enables
+alternate screen, hides the cursor, enables button-event mouse tracking (1002),
+SGR mouse mode (1006), and bracketed paste (2004) in a single write.
+
+`Term.deinit()` writes `mode.exit_all` (the reverse sequence) and restores the saved
+termios. A global `emergency_cleanup()` performs the same restore and is called from
+signal handlers for SIGTERM, SIGHUP, and SIGINT. The signal handlers reset the handler
+to SIG_DFL and re-raise so the process exits with the correct signal status. All escape
+sequences and their enable/disable pairs are declared as named constants in the `mode`
+struct to avoid duplication.
 
 ### 1.2 — Terminal Size
 
-- Query terminal size via `ioctl(TIOCGWINSZ)`
-- Handle `SIGWINCH` to detect resize (set an atomic flag, check at frame top)
-- Expose `cols: u16, rows: u16`
+`query_size(fd)` calls `ioctl(TIOCGWINSZ)` via `std.c.ioctl` and falls back to
+80×24 (`default_cols` / `default_rows`) when the ioctl returns zero dimensions.
+
+A `SIGWINCH` handler atomically sets `resize_pending`. `Term.check_resize()` reads and
+clears the flag, re-queries the size, and if it changed, allocates fresh front/back
+grids from the arena (old grids become dead arena memory — fine since resizes are rare).
+Returns `true` when the size changed so the caller can adjust.
+
+`cols` and `rows` are `u16` fields on `Term`.
 
 ### 1.3 — Cell Grid
 
 ```
-const Cell = struct {
-    codepoint: u21 = ' ',
-    fg: Color = .default,
-    bg: Color = .default,
-    attrs: Attrs = .{},
+const Ansi = enum(u8) {
+    black = 0, red = 1, green = 2, yellow = 3,
+    blue = 4, magenta = 5, cyan = 6, white = 7,
+    bright_black = 8, bright_red = 9, bright_green = 10, bright_yellow = 11,
+    bright_blue = 12, bright_magenta = 13, bright_cyan = 14, bright_white = 15,
+    _,  // 16-255 extended palette via @enumFromInt
 };
 
 const Color = union(enum) {
     default,
-    ansi: u8,        // 0-15 basic, 16-255 extended
+    ansi: Ansi,      // named 0-15, extensible to 255
     rgb: [3]u8,      // 24-bit truecolor
 };
 
@@ -89,428 +109,322 @@ const Attrs = packed struct {
     underline: bool = false,
     reverse: bool = false,
     strikethrough: bool = false,
+    _pad: u2 = 0,
+};
+
+const Cell = struct {
+    codepoint: u21 = ' ',
+    fg: Color = .default,
+    bg: Color = .default,
+    attrs: Attrs = .{},
 };
 ```
 
-- 2D grid backed by a flat `[]Cell` arena allocation
-- `fill_rect(rect, cell)` — fill a rectangular region
-- `write_text(col, row, max_width, string, fg, bg, attrs)` — write UTF-8 into cells,
-  return number of columns consumed. Handle wide characters (mark second cell as continuation).
-- `clear()` — reset all cells to default
+Two flat `[]Cell` slices (`front` and `back`) are allocated from the arena, sized
+`cols * rows`. The application draws into `back`; `front` tracks what is on screen.
+
+Grid operations (all methods on `Term`):
+- `cell_at(col, row) -> ?*Cell` — direct cell access with bounds check
+- `fill_rect(x, y, w, h, cell)` — fill a rectangular region, clamped to grid bounds
+- `write_text(col, row, max_width, text, fg, bg, attrs) -> u16` — decode UTF-8 into
+  cells, return columns consumed. Wide characters (CJK etc.) occupy two cells; the
+  second cell is marked with `codepoint = 0` as a continuation marker.
+- `clear()` — reset all cells in `back` to the default blank cell
 
 ### 1.4 — Grid Diffing & Flush
 
-- Compare current grid against previous grid cell-by-cell
-- Emit minimal ANSI escape sequences:
-  - Track cursor position; only emit movement when non-sequential
-  - Track current fg/bg/attrs; only emit SGR when style changes
-  - Batch writes into a buffered writer, flush once at end
-- Use CSI sequences for cursor positioning (`\x1b[row;colH`)
-- Use SGR sequences for styling (`\x1b[38;2;r;g;bm` for truecolor fg, etc.)
-- Double-buffer: swap current/previous grids after flush
+`Term.flush()` obtains a scratch arena (conflicting with the term's own arena), records
+the arena position, and pushes ANSI output bytes directly into the scratch arena via
+`emit()` / `emit_fmt()`. At the end it slices `arena.memory[start..end]` and writes it
+to the tty in a single `writeAll`. The scratch arena is released after the write.
+
+The diff loop walks every cell. For each cell where `back` differs from `front`:
+- Cursor positioning: tracks the logical cursor position; emits `\x1b[row;colH` only
+  when the cursor is not already at the right location (skips sequential writes).
+- SGR state: tracks current fg, bg, and attrs. Only emits SGR codes when they change.
+  When an attribute is turned *off*, a full reset (`\x1b[0m`) is emitted first, then
+  the still-active attributes are re-emitted. All SGR codes are named constants in the
+  `sgr` struct.
+- Color encoding: standard ANSI 0-7 uses `\x1b[3x/4xm`, bright 8-15 uses `\x1b[9x/10xm`,
+  extended 16-255 uses `\x1b[38;5;n / 48;5;nm`, truecolor uses `\x1b[38;2;r;g;b / 48;2;r;g;bm`.
+  The numeric bases are named constants (`sgr.fg_base`, `sgr.bg_base`, etc.).
+
+After writing, `front` and `back` pointers are swapped (no memcpy). The caller calls
+`clear()` on the now-stale `back` buffer at the start of the next frame.
 
 ### 1.5 — Input Parsing
 
-- Read from stdin in non-blocking mode (poll with timeout)
-- Parse ANSI escape sequences into structured events:
+`Term.poll_event(timeout_ms)` checks the atomic resize flag first, then checks for
+buffered bytes from a previous read, then calls `posix.poll` + `File.read` on the tty.
+The only method that touches `Term` state is `drain_next()`, which loops calling the
+free function `parse_input(buf)` and advancing `input_pos` until an event is produced
+or the buffer is exhausted.
+
+All parsing is implemented as free functions on `[]const u8`, returning a `ParseResult`
+(event + bytes consumed):
+
+| Function | Handles |
+|---|---|
+| `parse_input` | Dispatches first byte: escape sequences, control chars, UTF-8 |
+| `parse_csi` | CSI sequences: arrows, home/end, function keys, tilde-params, SGR mouse, bracketed paste |
+| `parse_ss3` | SS3 sequences: F1–F4, arrows (alternate encoding) |
+| `parse_sgr_mouse` | SGR mouse param parsing, delegates to `decode_sgr_mouse` |
+| `decode_sgr_mouse` | Interprets mouse button/modifier/motion/scroll bitmasks into `MouseEvent` |
+| `tilde_param_to_key` | Maps CSI `~` parameter numbers to `Key` enum values |
+| `char_to_key_event` | Maps a single byte to `KeyEvent` (enter, tab, backspace, ctrl+letter, printable) |
+| `decode_xterm_mods` | Decodes xterm modifier parameter (value-1 bitmask) into `Modifiers` |
+
+Byte classification is factored into named predicates: `is_escape`, `is_newline`,
+`is_tab`, `is_backspace`, `is_ctrl_char`, `is_digit`, `is_csi_final`, `is_sgr_mouse_final`,
+`is_mouse_release`, and `ctrl_to_letter`. Protocol bitmask constants live in `mouse_bits`
+and `xterm_mod_bits` structs.
+
+Event types:
 
 ```
 const InputEvent = union(enum) {
     key: KeyEvent,
     mouse: MouseEvent,
-    paste: []const u8,
     resize,
 };
 
 const KeyEvent = struct {
-    key: Key,              // enum: letters, arrows, tab, enter, escape, f1-f12, etc.
-    mods: Modifiers,       // shift, ctrl, alt
-    text: ?[]const u8,     // UTF-8 bytes for text input (null for special keys)
+    key: Key = .none,       // .codepoint for printable, or a named special key
+    codepoint: u21 = 0,    // the actual character (when key == .codepoint)
+    mods: Modifiers = .{},
 };
 
 const MouseEvent = struct {
-    kind: enum { press, release, move, scroll_up, scroll_down },
-    button: enum { left, middle, right, none },
+    kind: MouseKind,        // press, release, move, scroll_up, scroll_down
+    button: MouseButton,    // left, middle, right, none
     col: u16,
     row: u16,
     mods: Modifiers,
 };
 ```
 
-- Enable mouse reporting (`\x1b[?1006h` SGR mouse mode)
-- Enable bracketed paste (`\x1b[?2004h`)
-- Parse Kitty keyboard protocol if available, fall back to legacy
+Enabled on init: SGR mouse mode (1006), button-event tracking (1002), bracketed paste
+(2004). Bracketed paste content is consumed and discarded (no paste event emitted yet).
+Kitty keyboard protocol is not implemented; legacy xterm parsing covers the current needs.
 
 ### 1.6 — Validation
 
-Write a small test harness that:
-1. Enters alternate screen
-2. Fills the cell grid with a colored checkerboard pattern
-3. Responds to keyboard input by moving a highlighted cell
-4. Handles resize
-5. Exits cleanly on `q` or Ctrl-C
+The `tui_test` build module (`src/tui_test/`) provides interactive test applications,
+run via `zig build testing -- <name>`. The dispatch table in `tui_test.zig` maps names
+to entry points; adding a test is one file + one tuple entry.
+
+The **grid** test (`zig build testing -- grid`) validates Phase 1:
+1. Enters alternate screen with raw mode
+2. Fills the cell grid with a blue/red checkerboard pattern
+3. Draws a yellow highlighted cell that moves with arrow keys
+4. Shows a bold status bar with instructions
+5. Handles terminal resize (re-clamps cursor position)
+6. Exits cleanly on `q` or Ctrl-C (ISIG is disabled; Ctrl-C is parsed as input)
 
 ---
 
-## Phase 2: UI Module — Data Structures
+## Phase 2: UI Module — Data Structures, Stacks, Box Construction & Layout ✅
 
-**Goal**: Define the core types that the entire UI system operates on. These are the Zig
-equivalents of raddbg's `UI_Box`, `UI_Key`, `UI_Size`, `UI_Signal`, and `UI_State`.
+**Goal**: Implement the full immediate-mode UI core: data types, implicit state stacks,
+box construction with cross-frame persistence, and the layout algorithm.
 
-**Files**: `src/ui/ui.zig`, `src/ui/key.zig`, `src/ui/box.zig`, `src/ui/signal.zig`
+**Files**: `src/ui/ui.zig`, `src/ui/layout.zig`
 
-### 2.1 — Key
+**Status**: Complete.
 
-```
-const Key = struct {
-    value: u64,
+### 2.1 — Data Structures (`src/ui/ui.zig`)
 
-    const zero: Key = .{ .value = 0 };
+All types live in a single file rather than split across `key.zig`, `box.zig`, `signal.zig`
+as originally planned — the types are small and tightly coupled.
 
-    fn from_string(seed: u64, string: []const u8) Key { ... }
-    fn is_zero(self: Key) bool { ... }
-    fn eql(self: Key, other: Key) bool { ... }
-};
-```
+`Key` wraps a `u64` hash. `Key.from_string(seed, string)` uses `std.hash.Wyhash` seeded
+with the parent key to produce hierarchical keys. `parse_tag` splits strings on `##`
+(display / hash separation) and `###` (display / whole-string-as-hash) separators,
+returning a `Tag` with `display`, `hash_string`, and `has_display_string`.
 
-- Hash function: use a good 64-bit hash (e.g. wyhash or FNV-1a)
-- Seed with parent key to create hierarchical keys
-- Parse `##` and `###` separators to split display text from hash portion
+`SizeKind` is `enum { null, cells, text_content, parent_pct, children_sum }`. `Size`
+bundles `kind`, `value: f32`, and `strictness: f32` with constructors `Size.cells`,
+`Size.text`, `Size.pct`, `Size.children`.
 
-### 2.2 — Size
+`BoxFlags` is a `packed struct` with 24 boolean flags covering interaction (`clickable`,
+`keyboard_clickable`, `view_scroll`, `focus_hot`, `focus_active`), drawing (`draw_background`,
+`draw_border`, `draw_text`, `draw_hot_effects`, `draw_active_effects`, `draw_side_*`),
+clipping (`clip`, `overflow_x/y`), floating (`floating_x/y`), overflow permission
+(`allow_overflow_x/y`), and metadata (`disabled`, `focus_nav_skip`, `has_display_string`).
+Provides `with_border()` (sets draw_border + all four sides) and `merge()` (OR two flag sets).
 
-```
-const SizeKind = enum { null, cells, text_content, parent_pct, children_sum };
+`Box` has hash table links (`hash_next`/`hash_prev`), tree links (`first`/`last`/`next`/
+`prev`/`parent`/`child_count`), identity fields (`key`, `flags`, `string`, `display_string`,
+`text_align`, `pref_size[2]`, `child_layout_axis`, `fixed_position[2]`, `fixed_size[2]`,
+`min_size[2]`), styling (`bg_color`, `fg_color`, `border_color`, `text_padding`), layout
+output (`rect`, `position_delta[2]`), and persistent state that survives across frames
+(`first/last_touched_build_index`, `hot_t`, `active_t`, `disabled_t`, `focus_hot_t`,
+`focus_active_t`, `view_off[2]`, `view_off_target[2]`, `view_bounds[2]`).
 
-const Size = struct {
-    kind: SizeKind = .null,
-    value: f32 = 0,
-    strictness: f32 = 1,
-};
-```
+`Color` is `union(enum) { default, ansi: Ansi, rgb: [3]u8 }` where `Ansi` is `enum(u8)`
+with named values 0–15 and an extensible `_` variant. This type is shared with `term.zig`.
 
-Helper constructors: `Size.cells(n, strictness)`, `Size.text(pad, strictness)`,
-`Size.pct(frac, strictness)`, `Size.children(strictness)`.
+`Rect` has `col`, `row`, `w`, `h` (all `u16`) with `contains` and `intersect`.
 
-### 2.3 — BoxFlags
+`Signal` has `flags: SignalFlags`, `mouse_pos: [2]u16`, `scroll: [2]i16`. `SignalFlags`
+is a `packed struct` with `left_pressed/released/clicked`, `right_pressed/released/clicked`,
+`keyboard_pressed`, `hovering`, `mouse_over`, `dragging`, `commit`, plus `any()` and
+`merge()` helpers.
 
-A packed struct (or integer bitfield) with all relevant flags. Drop GPU-only flags from raddbg.
+Free functions for tree manipulation: `push_child`, `remove_child`, `tree_next`
+(depth-first pre-order).
 
-Keep:
-- `clickable`, `keyboard_clickable`, `view_scroll`, `focus_hot`, `focus_active`
-- `draw_background`, `draw_border`, `draw_text`, `draw_hot_effects`, `draw_active_effects`
-- `draw_side_top`, `draw_side_bottom`, `draw_side_left`, `draw_side_right`
-- `clip`, `overflow_x`, `overflow_y`
-- `floating_x`, `floating_y`
-- `allow_overflow_x`, `allow_overflow_y`
-- `disabled`, `focus_nav_skip`
-- `has_display_string` (for `##` separator support)
+### 2.2 — Stack System (`src/ui/ui.zig`)
 
-Drop: `draw_drop_shadow`, `draw_background_blur`, `draw_bucket`, `draw_text_fastpath_codepoint`
+`Stack(T)` is a generic fixed-capacity (64) stack. The bottom entry is the default and
+cannot be popped. Each entry carries an `auto_pop` flag. Operations: `push` (returns old
+top), `pop`, `top_val`, `set_next` (pushes with `auto_pop = true`), `auto_pop_if_set`,
+`reset`.
 
-### 2.4 — Box
+`stack_decls` is a comptime tuple of 16 stacks: `parent` (`?*Box`), `child_layout_axis`,
+`pref_width`, `pref_height`, `flags`, `bg_color`, `fg_color`, `border_color`,
+`text_padding`, `text_align`, `fixed_x/y`, `fixed_width/height`, `min_width/height`.
+The `focus_hot` and `focus_active` stacks from the original plan are omitted — focus
+handling will be added with Phase 3 (Interaction).
 
-```
-const Box = struct {
-    // hash table links
-    hash_next: ?*Box = null,
-    hash_prev: ?*Box = null,
+`Stacks` is a struct generated at comptime from `stack_decls` via `@Type`. Helper
+functions `init_stacks`, `auto_pop_all`, `reset_stacks` operate over all stacks via
+`inline for`. `StackName` is a comptime `FieldEnum(Stacks)`.
 
-    // tree links
-    first: ?*Box = null,
-    last: ?*Box = null,
-    next: ?*Box = null,
-    prev: ?*Box = null,
-    parent: ?*Box = null,
-    child_count: u32 = 0,
+Named helpers come in two flavors:
 
-    // identity & config (set during build)
-    key: Key = Key.zero,
-    flags: BoxFlags = .{},
-    string: []const u8 = "",
-    display_string: []const u8 = "",    // portion before ## if present
-    text_align: TextAlign = .left,
-    pref_size: [2]Size = .{ .{}, .{} }, // [x, y]
-    child_layout_axis: Axis = .y,
-    fixed_position: [2]f32 = .{ 0, 0 },
-    fixed_size: [2]f32 = .{ 0, 0 },
-    min_size: [2]f32 = .{ 0, 0 },
+- **Persistent** (`push_*`/`pop_*`): stay on the stack until explicitly popped.
+  `push_color`/`pop_color` (fg), `push_bg`/`pop_bg`, `push_border_color`/`pop_border_color`,
+  `push_width`/`pop_width`, `push_height`/`pop_height`, `push_flags`/`pop_flags`,
+  `push_axis`/`pop_axis`, `push_text_padding`/`pop_text_padding`,
+  `push_text_align`/`pop_text_align`, `push_parent`/`pop_parent`.
 
-    // styling
-    bg_color: Color = .default,
-    fg_color: Color = .default,
-    border_color: Color = .default,
-    text_padding: u16 = 0,
+- **Auto-pop** (`next_*`): consumed by the next `build_box` call.
+  `next_color`, `next_bg`, `next_border_color`, `next_width`, `next_height`,
+  `next_size(w, h)` (convenience for both), `next_flags`, `next_axis`,
+  `next_text_padding`, `next_text_align`, `next_fixed_x/y`, `next_fixed_width/height`,
+  `next_min_width/height`.
 
-    // computed by layout
-    rect: Rect = .{},
-    position_delta: [2]f32 = .{ 0, 0 },
+A generic interface (`push_stack`/`pop_stack`/`top_stack`/`set_next_stack` taking
+a comptime `StackName`) is available for anything not covered by a named helper.
 
-    // persistent state (survives across frames)
-    first_touched_build_index: u64 = 0,
-    last_touched_build_index: u64 = 0,
-    hot_t: f32 = 0,
-    active_t: f32 = 0,
-    disabled_t: f32 = 0,
-    focus_hot_t: f32 = 0,
-    focus_active_t: f32 = 0,
-    view_off: [2]f32 = .{ 0, 0 },
-    view_off_target: [2]f32 = .{ 0, 0 },
-    view_bounds: [2]f32 = .{ 0, 0 },
-};
-```
+### 2.3 — Global State & Cross-Frame Persistence (`src/ui/ui.zig`)
 
-### 2.5 — Rect
+File-level global `State` holds two `Arena` values (double-buffered), an `arena_index: u1`,
+a `build_index: u64` frame counter, a box hash table (`[4096]?*Box` with chained buckets
+via `hash_next`/`hash_prev`), the `Stacks`, a `root: ?*Box`, and `screen_size`.
 
-```
-const Rect = struct {
-    col: u16 = 0,
-    row: u16 = 0,
-    w: u16 = 0,
-    h: u16 = 0,
+Two init paths:
+- `init_all()` — allocates two internal arenas for the full `begin_build`/`end_build`
+  cycle with cross-frame persistence. Paired with `deinit()`.
+- `init(arena)` — lightweight single-arena init for tests that don't need persistence.
 
-    fn contains(self: Rect, col: u16, row: u16) bool { ... }
-    fn intersect(self: Rect, other: Rect) Rect { ... }
-};
-```
+`begin_build(screen_w, screen_h)` bumps `build_index`, swaps `arena_index`, clears the
+current arena, resets stacks, builds a root box sized to the screen, and pushes it as
+parent. Returns `*Box` (cannot fail — box allocation panics on OOM).
 
-### 2.6 — Signal
+`end_build()` runs layout via `layout_mod.layout(root, w, h)`, then prunes stale boxes
+from the hash table (any box whose `last_touched_build_index < build_index`).
 
-```
-const Signal = struct {
-    flags: SignalFlags,
-    mouse_pos: [2]u16,
-    scroll: [2]i16,
-};
+`get_root()` returns the current frame's root box.
 
-const SignalFlags = packed struct {
-    left_pressed: bool = false,
-    left_released: bool = false,
-    left_clicked: bool = false,
-    right_pressed: bool = false,
-    right_clicked: bool = false,
-    keyboard_pressed: bool = false,
-    hovering: bool = false,
-    mouse_over: bool = false,
-    dragging: bool = false,
-    commit: bool = false,
-    // ... as needed
-};
-```
+### 2.4 — Box Construction (`src/ui/ui.zig`)
+
+`build_box(string, extra_flags) *Box` (panics on OOM):
+1. Allocate a fresh `Box` on the current arena (panics on OOM) and zero it.
+2. Parse the tag string for display/hash portions.
+3. Compute `Key` from hash string seeded with parent key.
+4. Look up key in the box hash table. If found, copy persistent fields from the
+   previous frame's box (`hot_t`, `active_t`, `disabled_t`, `focus_hot/active_t`,
+   `view_off`, `view_off_target`, `view_bounds`, `first_touched_build_index`) and
+   compute `position_delta`. Remove the old entry from the table.
+5. Stamp `last_touched_build_index = build_index`.
+6. Apply all stack tops (flags merged with `extra_flags`, axis, sizes, colors, etc.).
+7. Insert into box hash table.
+8. Link as child of current parent.
+9. Auto-pop all stacks with `auto_pop` set.
+
+`push_parent_box` (returns `*Box`) combines `build_box` + `push_parent`.
+`spacer(axis, amount)` (returns `void`) builds an empty box with appropriate fixed sizes.
+
+String helpers: `arena_dupe`, `arena_print` (uses scratch arena for intermediate
+formatting, then copies to the frame arena).
+
+### 2.5 — Layout Algorithm (`src/ui/layout.zig`)
+
+`layout(root, screen_w, screen_h)` sets the root rect to screen bounds, then runs five
+passes for the X axis followed by five passes for the Y axis. The `axis` parameter is
+`comptime axis: Axis` (where `Axis` is `enum(u1) { x, y }`) so all indexing compiles
+to direct field access and comparisons read as `axis == .x` / `axis == b.child_layout_axis`.
+
+**Pass 1 — Standalone Sizes**: Pre-order walk. `cells` → `fixed_size[axis] = value`.
+`text_content` → `fixed_size[x] = display_string.len + size.value + text_padding * 2`,
+`fixed_size[y] = 1 + size.value`. Display width currently counts bytes (correct for
+ASCII; proper unicode / East Asian Width handling is a TODO).
+
+**Pass 2 — Upwards-Dependent Sizes**: Pre-order walk. `parent_pct` → walk up to the
+nearest ancestor whose size kind is `cells`, `text_content`, `null`, or an already-resolved
+`parent_pct`. Use that ancestor's `fixed_size` minus border insets as the available space,
+then `fixed_size[axis] = @round(avail * frac)`.
+
+**Pass 3 — Downwards-Dependent Sizes**: Post-order (recursive). `children_sum` along
+the layout axis sums non-floating children's `fixed_size`; perpendicular takes the max.
+Border insets are added to the total.
+
+**Pass 4 — Constraint Enforcement**: Pre-order. Along the layout axis: if children's
+total exceeds available space, the overflow is distributed proportionally among children
+with `strictness < 1.0`, weighted by `(1 - strictness) * (child_size / shrinkable_total)`.
+Children with `strictness = 1.0` never shrink. On the cross axis: children are clamped to
+the parent's available size unless `allow_overflow_x/y` is set.
+
+**Pass 5 — Positioning**: Pre-order. Along the layout axis a cursor accumulates position;
+on the cross axis children start at the border inset. Floating children use `fixed_position`
+directly. `view_off` is subtracted from the cursor for scroll support. Sizes are snapped
+to integer via `@trunc` and the final `Rect` is written with `u16` clamping.
+
+After positioning, each child's `fixed_size[axis]` is re-synced from the snapped rect so
+downstream layout on the other axis sees consistent integer sizes.
+
+### 2.6 — Demo (`src/tui_test/ui_demo.zig`)
+
+Interactive TUI app (`zig build testing -- ui_demo`) exercising the full stack: 3 counters
+with +/− buttons, reset, theme toggle, mouse + keyboard focus navigation. Contains its
+own minimal layout engine and draw pass (throwaway — these validate the data structures
+but should not be promoted to the real modules).
 
 ### 2.7 — Validation
 
-Unit tests for:
-- Key hashing determinism, `##`/`###` parsing
-- Size helper constructors
-- Rect intersection/containment
-- Box tree linking (add child, remove child, verify traversal order)
+Unit tests in `src/ui/ui.zig`:
+- Stack push/pop/top, set_next auto-pop behavior
+- `build_box` applies stack tops and auto-pops set_next entries
+- `push_parent_box` links children correctly
+- `parse_tag` `##`/`###` separators
+- `Rect.intersect` overlap and no-overlap cases
+- Cross-frame persistence: `begin_build`/`end_build` twice, verify `hot_t` and `view_off`
+  carry over on matching keys
+- Stale box pruning: box not rebuilt on frame 2 is absent from hash table after `end_build`
+- `begin_build` creates root, `end_build` runs layout, verify child rects
 
----
-
-## Phase 3: UI Module — Stacks & Box Construction
-
-**Goal**: Implement the implicit state stack system and the box builder API that lets
-application code declare a tree of boxes each frame.
-
-**Files**: `src/ui/stacks.zig`, `src/ui/build.zig`, extends `src/ui/ui.zig`
-
-### 3.1 — Stack System
-
-Use Zig comptime to generate all stacks from a single declaration table:
-
-```
-const stack_decls = .{
-    .{ "parent",            *Box,      null },
-    .{ "child_layout_axis", Axis,      .y },
-    .{ "pref_width",        Size,      Size.cells(10, 1) },
-    .{ "pref_height",       Size,      Size.cells(1, 1) },
-    .{ "flags",             BoxFlags,  .{} },
-    .{ "bg_color",          Color,     .default },
-    .{ "fg_color",          Color,     .default },
-    .{ "border_color",      Color,     .default },
-    .{ "text_padding",      u16,       0 },
-    .{ "text_align",        TextAlign, .left },
-    .{ "focus_hot",         FocusKind, .null },
-    .{ "focus_active",      FocusKind, .null },
-    .{ "fixed_x",           f32,       0 },
-    .{ "fixed_y",           f32,       0 },
-    .{ "fixed_width",       f32,       0 },
-    .{ "fixed_height",      f32,       0 },
-    .{ "min_width",         f32,       0 },
-    .{ "min_height",        f32,       0 },
-};
-```
-
-Each stack provides:
-- `push(value) -> old_top` — push value, return previous top
-- `pop() -> popped` — pop and return
-- `top() -> current` — peek at current value
-- `set_next(value)` — push, auto-pop after next box construction
-
-A stack entry has a flag to mark "auto-pop" entries. After each `build_box` call,
-all stacks with an auto-pop entry at the top get popped.
-
-### 3.2 — State
-
-The `State` struct holds all per-frame and persistent data:
-
-```
-const State = struct {
-    build_arenas: [2]*Arena,
-    build_index: u64,
-    current_arena_index: u1,
-
-    // box hash table (for cross-frame persistence)
-    box_table: [BOX_TABLE_SIZE]?*Box,
-    box_free_list: ?*Box,
-
-    // stacks (generated via comptime)
-    stacks: Stacks,
-
-    // frame parameters
-    screen_size: [2]u16,
-    events: *EventList,
-    dt: f32,
-
-    // interaction state
-    hot_key: Key,
-    active_key: [3]Key,      // per mouse button
-    focus_hot_key: Key,
-    focus_active_key: Key,
-};
-```
-
-Double-buffered arenas: each frame, the "current" arena is reset. Boxes from the
-previous frame survive in the other arena until pruned.
-
-### 3.3 — Box Construction
-
-```
-fn build_box_from_string(flags: BoxFlags, string: []const u8) *Box { ... }
-fn build_box_from_key(flags: BoxFlags, key: Key) *Box { ... }
-```
-
-Steps:
-1. Compute key from string (seeded with parent key)
-2. Look up in hash table — reuse if found, allocate if not
-3. Zero per-build fields, copy persistent fields from previous frame's box
-4. Apply all stack tops to the box (flags, sizes, colors, etc.)
-5. Link as child of current parent
-6. Pop all auto-pop stack entries
-7. Return the box
-
-### 3.4 — Scoped Helpers
-
-Zig doesn't have C's `DeferLoop`, but we can use a struct with `init`/`deinit`:
-
-```
-const Row = struct {
-    fn open() void {
-        push_child_layout_axis(.x);
-        // push a container box as parent
-    }
-    fn close() void {
-        pop_parent();
-        pop_child_layout_axis();
-    }
-};
-
-// Usage:
-{
-    Row.open();
-    defer Row.close();
-    // children laid out horizontally
-}
-```
-
-Or a `with_*` pattern that takes a callback — whichever is more ergonomic. Evaluate both.
-
-### 3.5 — Validation
-
-Test that:
-- Building a tree of boxes produces the correct parent/child/sibling links
-- `set_next` auto-pops after one box
-- The hash table persists boxes across frames (call begin/build/end twice, check same pointer)
-- Stack push/pop ordering is correct
-
----
-
-## Phase 4: UI Module — Layout
-
-**Goal**: Implement the 5-pass layout algorithm that computes integer cell rectangles
-for every box in the tree.
-
-**Files**: `src/ui/layout.zig`
-
-### 4.1 — Pass 1: Standalone Sizes
-
-For each axis, walk all boxes. If `pref_size[axis].kind` is:
-- `cells` → `fixed_size[axis] = value`
-- `text_content` → `fixed_size[axis] = display_string.len + text_padding * 2` (for X axis),
-  `1` (for Y axis, since a single line of text is 1 row)
-
-Handle wide characters in text width measurement (count display columns, not bytes).
-
-### 4.2 — Pass 2: Upwards-Dependent Sizes
-
-Walk all boxes. If `pref_size[axis].kind` is `parent_pct`:
-- Walk up to nearest ancestor with a determined size
-- `fixed_size[axis] = @round(ancestor.fixed_size[axis] * value)`
-
-### 4.3 — Pass 3: Downwards-Dependent Sizes
-
-Walk all boxes in **post-order** (children before parents). If `pref_size[axis].kind` is `children_sum`:
-- Along layout axis: sum children's `fixed_size[axis]`
-- Perpendicular to layout axis: max of children's `fixed_size[axis]`
-- Skip floating children
-
-### 4.4 — Pass 4: Constraint Enforcement
-
-For each parent along its layout axis:
-- Sum children's `fixed_size[axis]`
-- If sum > parent's `fixed_size[axis]`, distribute overflow proportionally by `(1 - strictness)`
-- Children with `strictness = 1.0` don't shrink
-- On the non-layout axis, clamp each child to parent's size (unless `allow_overflow`)
-
-Snap all sizes to integers after this pass.
-
-### 4.5 — Pass 5: Positioning
-
-Walk the tree. For each parent's children:
-- Along layout axis: place sequentially, accumulating position
-- Perpendicular: position = 0 (relative to parent)
-- Floating children: use `fixed_position` directly
-- Apply `view_off` scroll offset
-- Compute final `rect` as parent origin + position
-
-### 4.6 — End-of-Build
-
-`end_build()`:
-1. Run layout (X axis, then Y axis, all 5 passes each)
-2. Prune boxes not touched this frame from the hash table
-3. Update animation floats (`hot_t`, `active_t`, etc.) — snap to target for TUI
-
-### 4.7 — Validation
-
-Test cases:
-- Three equal-width children in a row, parent = 30 cells → each gets 10
+Unit tests in `src/ui/layout.zig`:
+- Three equal-width children in a 30-cell row → each gets 10
 - `parent_pct(0.5)` child in a 20-cell parent → child gets 10
-- `children_sum` parent with children of 5, 10, 8 → parent gets 23
-- Overflow: children sum to 40, parent is 30, various strictness values
-- Nested layouts: row inside column, verify final rects
+- `children_sum` container sums 5 + 10 + 8 = 23, cross axis = max = 8
+- Overflow with strictness: strict child keeps 20, flex child absorbs reduction
+- Nested row inside column: verify both levels of rects
 - Floating box positioned at absolute coordinates
+- Border insets reduce available space for children
+- `text_content` sizing: "Hello" + padding 1 → width 7, height 1
 
 ---
 
-## Phase 5: UI Module — Interaction
+## Phase 3: UI Module — Interaction
 
 **Goal**: Implement event processing and signal generation so boxes can respond to
 keyboard and mouse input.
 
 **Files**: `src/ui/interaction.zig`
 
-### 5.1 — Event Conversion
+### 3.1 — Event Conversion
 
 Convert terminal `InputEvent` (from Phase 1) into `UiEvent`:
 
@@ -527,7 +441,7 @@ const UiEvent = struct {
 
 Build an `UiEventList` (arena-allocated linked list) at the start of each frame.
 
-### 5.2 — Signal Computation
+### 3.2 — Signal Computation
 
 `signal_from_box(box: *Box) Signal`:
 1. Iterate over the event list
@@ -541,7 +455,7 @@ Build an `UiEventList` (arena-allocated linked list) at the start of each frame.
 
 Update `hot_t` / `active_t` floats based on whether the box is hot/active this frame.
 
-### 5.3 — Focus Navigation
+### 3.3 — Focus Navigation
 
 - Track `focus_hot_key` and `focus_active_key` in state
 - Tab / Shift-Tab cycle through focusable boxes (those with `focus_hot` or `focus_active` flags)
@@ -549,7 +463,7 @@ Update `hot_t` / `active_t` floats based on whether the box is hot/active this f
 - Enter / Space on a focused `keyboard_clickable` box → keyboard press signal
 - Focus order = tree order (depth-first pre-order)
 
-### 5.4 — Validation
+### 3.4 — Validation
 
 Test:
 - Mouse click inside a button box → `left_clicked` signal
@@ -561,23 +475,23 @@ Test:
 
 ---
 
-## Phase 6: TUI Draw Layer
+## Phase 4: TUI Draw Layer
 
 **Goal**: Walk the computed box tree and render it into the cell grid from Phase 1.
 
 **Files**: `src/tui/draw.zig`
 
-### 6.1 — Tree Walk
+### 4.1 — Tree Walk
 
 Depth-first post-order walk of the box tree (same as raddbg). For each box, interpret
 its flags and fill the corresponding region of the cell grid.
 
-### 6.2 — Background Fill
+### 4.2 — Background Fill
 
 `draw_background` flag → fill `box.rect` region with `box.bg_color`. If `hot_t > 0`,
 blend/brighten. If `active_t > 0`, darken or invert.
 
-### 6.3 — Border Rendering
+### 4.3 — Border Rendering
 
 `draw_border` flag → write box-drawing characters along edges of `box.rect`:
 
@@ -597,7 +511,7 @@ When two borders are adjacent, resolve junction characters:
 For a single-height box with a border, the box is at minimum 1 row (the border itself
 consumes space). Content is inside the border.
 
-### 6.4 — Text Rendering
+### 4.4 — Text Rendering
 
 `draw_text` flag → write `box.display_string` into the cell grid within `box.rect`:
 - Apply `text_padding` (offset from left/right edge)
@@ -606,24 +520,24 @@ consumes space). Content is inside the border.
 - Apply `box.fg_color` and current `box.bg_color` to each cell
 - Handle wide characters (CJK/emoji take 2 columns)
 
-### 6.5 — Clip Stack
+### 4.5 — Clip Stack
 
 `clip` flag → push `box.rect` as a clip rectangle. All child drawing is clamped to
 this rectangle. Clip rects are intersected (nested clips narrow the visible area).
 Pop when leaving the box's subtree.
 
-### 6.6 — Hot/Active Effects
+### 4.6 — Hot/Active Effects
 
 - `draw_hot_effects` + `hot_t > 0` → bold text, brighter bg, or reverse video
 - `draw_active_effects` + `active_t > 0` → reverse video or distinct bg color
 - These are simple attribute modifications applied on top of the base style
 
-### 6.7 — Floating Boxes
+### 4.7 — Floating Boxes
 
 Floating boxes (tooltips, context menus) are drawn last, on top of everything else.
 They use absolute positioning and should be clamped to screen bounds.
 
-### 6.8 — Validation
+### 4.8 — Validation
 
 Visual test: build a tree with nested rows/columns, borders, colored backgrounds, and
 text. Render to grid. Verify grid contents match expected output (write a `grid_to_string`
@@ -631,13 +545,13 @@ helper for test assertions).
 
 ---
 
-## Phase 7: Frame Loop Integration
+## Phase 5: Frame Loop Integration
 
 **Goal**: Wire everything together into a working frame loop.
 
-**Files**: `src/tui/tui.zig` (replaces the current stub)
+**Files**: `src/bin/bin.zig` (replaces the current stub)
 
-### 7.1 — Frame Loop
+### 5.1 — Frame Loop
 
 ```
 pub fn run() !void {
@@ -677,19 +591,19 @@ pub fn run() !void {
 }
 ```
 
-### 7.2 — Delta Time
+### 5.2 — Delta Time
 
 Track time between frames for animation floats. Use `std.time.Instant`.
 For TUI, most animations are instant (`rate = 1.0`), but smooth scroll can use real dt.
 
-### 7.3 — Validation
+### 5.3 — Validation
 
 End-to-end test: start the TUI, display a simple UI (a bordered box with text and
 a focusable region), navigate with Tab, click with Enter, verify focus cycling works.
 
 ---
 
-## Phase 8: Widget Submodule
+## Phase 6: Widget Submodule
 
 **Goal**: Build common widget helpers as a submodule within the `ui` module, layered on
 top of the core box-building API. These are thin wrappers — the application can always
@@ -697,33 +611,33 @@ bypass them and compose boxes directly.
 
 **Files**: `src/ui/widgets.zig`
 
-### 8.1 — Basic Widgets
+### 6.1 — Basic Widgets
 
 - **`label(string)`** — non-interactive text box
 - **`button(string) Signal`** — clickable box with border, background, text
 - **`spacer(size)`** — invisible box for layout spacing
 - **`separator()`** — horizontal or vertical line (uses box-drawing chars via flag)
 
-### 8.2 — Text Input
+### 6.2 — Text Input
 
 - **`line_edit(buffer, cursor) Signal`** — single-line editable text field
   - Draws text with cursor position indicator
   - Handles text input events, backspace, delete, home/end, left/right
   - Selection (shift+arrows) is a stretch goal
 
-### 8.3 — Scroll List
+### 6.3 — Scroll List
 
 - **`scroll_list_begin(count, row_height, scroll_pt)` / `scroll_list_end()`**
   - Virtual scrolling: only builds boxes for visible rows
   - Scroll bar indicator
   - Mouse wheel + keyboard (page up/down, arrow keys) scroll support
 
-### 8.4 — Container Widgets
+### 6.4 — Container Widgets
 
 - **`panel_begin(title)` / `panel_end()`** — bordered container with title
 - **`collapsible_header(title, open) Signal`** — expandable section
 
-### 8.5 — Validation
+### 6.5 — Validation
 
 - `button("OK")` returns a signal with `left_clicked` when clicked
 - `label("hello")` produces a box with correct text and no interaction flags
@@ -735,25 +649,23 @@ bypass them and compose boxes directly.
 ## Dependency Graph
 
 ```
-                    ┌─ Phase 2: UI Data Structures ─┐
-                    │                                │
-Phase 1: Terminal ──┤  Phase 3: Stacks & Box Build ──┤ (depends on 2)
-    Backend         │                                │
-                    │  Phase 4: Layout ──────────────┤ (depends on 3)
-                    │                                │
-                    │  Phase 5: Interaction ──────────┤ (depends on 3, 1 for events)
-                    │                                │
-                    └─ Phase 6: TUI Draw Layer ──────┤ (depends on 1, 4)
-                                                     │
-                       Phase 7: Frame Loop ──────────┤ (depends on all above)
-                                                     │
-                       Phase 8: Widget Submodule ────┘ (depends on 7)
+Phase 1: Terminal Backend ✅ ─┐
+                              │
+Phase 2: UI Core ✅ ──────────┤
+                              │
+Phase 3: Interaction ─────────┤ (depends on 2, 1 for events)
+                              │
+Phase 4: TUI Draw Layer ──────┤ (depends on 1, 2)
+                              │
+Phase 5: Frame Loop ──────────┤ (depends on all above)
+                              │
+Phase 6: Widget Submodule ────┘ (depends on 5)
 ```
 
-Phases 1 and 2 can be developed in parallel — they live in different modules (`tui` and
-`ui` respectively). Phase 3 depends on 2. Phase 4 and 5 depend on 3 and can be developed
-in parallel with each other. Phase 6 depends on 1 and 4. Phase 7 integrates everything.
-Phase 8 builds the widget submodule on top of the working frame loop.
+Phases 3 and 4 can be developed in parallel — interaction needs event types from Phase 1
+and box types from Phase 2, while the draw layer needs the cell grid from Phase 1 and
+computed rects from Phase 2. Phase 5 integrates everything. Phase 6 builds convenience
+widgets on top of the working frame loop.
 
 ---
 
@@ -761,15 +673,10 @@ Phase 8 builds the widget submodule on top of the working frame loop.
 
 ```
 src/ui/                          # ui build module — rendering-agnostic
-├── ui.zig                       # Root: public API, re-exports core + widgets
-├── key.zig                      # Key hashing, ## / ### parsing
-├── box.zig                      # Box, BoxFlags, Rect, Size, SizeKind
-├── signal.zig                   # Signal, SignalFlags, UiEvent
-├── stacks.zig                   # Comptime-generated implicit state stacks
-├── build.zig                    # State, box construction, begin/end build
+├── ui.zig                       # Root: types, stacks, state, box construction
 ├── layout.zig                   # 5-pass layout algorithm
-├── interaction.zig              # Event processing, signal_from_box, focus nav
-└── widgets.zig                  # Submodule: button, label, line_edit, etc. (Phase 8)
+├── interaction.zig              # Event processing, signal_from_box, focus nav (Phase 3, not yet created)
+└── widgets.zig                  # button, label, line_edit, etc. (Phase 6, not yet created)
 
 src/tui/                         # tui build module — terminal-specific
 ├── tui.zig                      # Root: public API, frame loop, init/deinit
@@ -777,15 +684,25 @@ src/tui/                         # tui build module — terminal-specific
 ├── draw.zig                     # Box tree → cell grid rendering
 ├── RADDBG_UI_REPORT.md          # Architecture analysis (reference)
 └── IMPLEMENTATION_PLAN.md       # This file
+
+src/tui_test/                    # tui_test build module — interactive test apps
+├── tui_test.zig                 # Entry point: dispatches on CLI arg to test runners
+├── grid.zig                     # Phase 1 validation: checkerboard + cursor movement
+└── ui_demo.zig                  # Phase 2 validation: counters, focus, theme toggle
 ```
 
 The split across two build modules is intentional. The `ui` module has zero knowledge of
 the terminal and operates purely on abstract cell coordinates — it could back a GUI just
 as easily. Within `ui`, the core files (Phases 2–5) provide the box-building and layout
-engine, while `widgets.zig` (Phase 8) is a submodule of convenience helpers built on
+engine, while `widgets.zig` (Phase 6) is a submodule of convenience helpers built on
 that core. The `tui` module imports `ui` and provides the terminal-specific bridge:
 `term.zig` handles raw I/O, `draw.zig` interprets box flags into cell grid writes, and
 `tui.zig` orchestrates the frame loop. The application imports both modules.
+
+The `tui_test` module is a separate executable (`zig build testing -- <name>`) containing
+interactive test/demo applications. Each test is a standalone file with a `run()` function,
+registered in a dispatch table in `tui_test.zig`. This keeps validation demos out of the
+library modules while making them easy to build and run.
 
 ---
 

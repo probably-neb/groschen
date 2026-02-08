@@ -13,6 +13,7 @@ pub fn build(b: *std.Build) void {
         .{ .name = "bin", .path = "src/bin/bin.zig" },
         .{ .name = "tui_test", .path = "src/tui_test/tui_test.zig" },
         .{ .name = "tui", .path = "src/tui/tui.zig" },
+        .{ .name = "ui", .path = "src/ui/ui.zig" },
         .{ .name = "base", .path = "src/base/base.zig" },
     };
 

@@ -1,8 +1,10 @@
 const std = @import("std");
 const grid = @import("grid.zig");
+const ui_demo = @import("ui_demo.zig");
 
 const tests = .{
     .{ "grid", grid.run },
+    .{ "ui_demo", ui_demo.run },
 };
 
 pub fn main() !void {
