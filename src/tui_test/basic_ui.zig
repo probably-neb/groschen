@@ -24,50 +24,50 @@ const Theme = enum {
     dark,
     light,
 
-    fn bg(self: Theme) Color {
-        return switch (self) {
+    fn bg(theme: Theme) Color {
+        return switch (theme) {
             .dark => .{ .ansi = .black },
             .light => .{ .ansi = .white },
         };
     }
-    fn fg(self: Theme) Color {
-        return switch (self) {
+    fn fg(theme: Theme) Color {
+        return switch (theme) {
             .dark => .{ .ansi = .white },
             .light => .{ .ansi = .black },
         };
     }
-    fn accent(self: Theme) Color {
-        return switch (self) {
+    fn accent(theme: Theme) Color {
+        return switch (theme) {
             .dark => .{ .ansi = .cyan },
             .light => .{ .ansi = .blue },
         };
     }
-    fn muted(self: Theme) Color {
-        return switch (self) {
+    fn muted(theme: Theme) Color {
+        return switch (theme) {
             .dark => .{ .ansi = .bright_black },
             .light => .{ .ansi = .bright_black },
         };
     }
-    fn panel_bg(self: Theme) Color {
-        return switch (self) {
+    fn panel_bg(theme: Theme) Color {
+        return switch (theme) {
             .dark => .{ .rgb = .{ 30, 30, 40 } },
             .light => .{ .rgb = .{ 230, 230, 240 } },
         };
     }
-    fn button_bg(self: Theme) Color {
-        return switch (self) {
+    fn button_bg(theme: Theme) Color {
+        return switch (theme) {
             .dark => .{ .rgb = .{ 50, 50, 70 } },
             .light => .{ .rgb = .{ 200, 200, 220 } },
         };
     }
-    fn hot_bg(self: Theme) Color {
-        return switch (self) {
+    fn hot_bg(theme: Theme) Color {
+        return switch (theme) {
             .dark => .{ .rgb = .{ 70, 70, 100 } },
             .light => .{ .rgb = .{ 170, 170, 210 } },
         };
     }
-    fn active_bg(self: Theme) Color {
-        return switch (self) {
+    fn active_bg(theme: Theme) Color {
+        return switch (theme) {
             .dark => .{ .rgb = .{ 100, 100, 140 } },
             .light => .{ .rgb = .{ 140, 140, 190 } },
         };
@@ -110,135 +110,151 @@ fn build_ui(app: *App) !void {
     const theme = app.theme;
 
     _ = ui.push_color(theme.fg());
+    defer _ = ui.pop_color();
 
-    // Title bar
-    {
-        ui.next_axis(.x);
-        ui.next_width(.pct(1, 1));
-        ui.next_height(.cells(1, 1));
-        ui.next_bg(theme.accent());
-        ui.next_border_color(theme.accent());
-        _ = ui.push_parent_box("", .{ .draw_background = true, .draw_border = true, .draw_side_bottom = true });
-
-        ui.next_width(.pct(1, 0));
-        ui.next_height(.pct(1, 0));
-        ui.next_color(theme.bg());
-        _ = ui.build_box(" UI Demo", .{ .draw_text = true });
-
-        ui.pop_parent();
-    }
-
+    build_title_bar(theme);
     ui.spacer(.y, 1);
+    try build_counter_panels(app, theme);
+    ui.spacer(.y, 1);
+    build_action_row(app, theme);
+    build_filler();
+    build_status_bar(theme);
+}
 
-    // Counter panels
-    for (0..num_counters) |ci| {
-        const panel_str = try ui.arena_print(" {s} ##counter_panel_{d}", .{ counter_labels[ci], ci });
+fn build_title_bar(theme: Theme) void {
+    ui.next_axis(.x);
+    ui.next_width(.pct(1, 1));
+    ui.next_height(.cells(1, 1));
+    ui.next_bg(theme.accent());
+    ui.next_border_color(theme.accent());
+    _ = ui.push_parent_box("", .{ .draw_background = true, .draw_border = true, .draw_side_bottom = true });
+    defer ui.pop_parent();
+
+    ui.next_width(.pct(1, 0));
+    ui.next_height(.pct(1, 0));
+    _ = ui.push_color(theme.bg());
+    defer _ = ui.pop_color();
+    _ = ui.build_box(" UI Demo", .{ .draw_text = true });
+}
+
+fn build_counter_panels(app: *App, theme: Theme) !void {
+    for (0..num_counters) |counter_index| {
+        const panel_str = try ui.arena_print(" {s} ##counter_panel_{d}", .{ counter_labels[counter_index], counter_index });
 
         ui.next_width(.pct(1, 0));
         ui.next_height(.children(1));
-        ui.next_bg(theme.panel_bg());
-        ui.next_border_color(theme.muted());
+        _ = ui.push_bg(theme.panel_bg());
+        defer _ = ui.pop_bg();
+        _ = ui.push_border_color(theme.muted());
+        defer _ = ui.pop_border_color();
         _ = ui.push_parent_box(panel_str, panel_flags);
-
-        // Row
-        {
-            ui.next_axis(.x);
-            ui.next_width(.pct(1, 0));
-            ui.next_height(.children(1));
-            _ = ui.push_parent_box("", .{});
-
-            ui.spacer(.x, 1);
-
-            const label_str = try ui.arena_print(" {s}: ", .{counter_labels[ci]});
-            ui.next_width(.text(0, 1));
-            ui.next_height(.pct(1, 0));
-            ui.next_color(theme.accent());
-            _ = ui.build_box(label_str, .{ .draw_text = true });
-
-            const dec_str = try ui.arena_print(" - ##dec_{d}", .{ci});
-            if (build_button(dec_str, theme).clicked()) {
-                app.counters[ci] -= 1;
-            }
-
-            ui.spacer(.x, 1);
-
-            const val_str = try ui.arena_print(" {d} ", .{app.counters[ci]});
-            const val_color: Color = if (app.counters[ci] < 0) .{ .ansi = .red } else if (app.counters[ci] > 0) .{ .ansi = .green } else theme.fg();
-            ui.next_width(.text(0, 1));
-            ui.next_height(.pct(1, 0));
-            ui.next_color(val_color);
-            _ = ui.build_box(val_str, .{ .draw_text = true });
-
-            ui.spacer(.x, 1);
-
-            const inc_str = try ui.arena_print(" + ##inc_{d}", .{ci});
-            if (build_button(inc_str, theme).clicked()) {
-                app.counters[ci] += 1;
-            }
-
-            ui.spacer(.x, 1);
-
-            ui.pop_parent();
-        }
-
-        ui.pop_parent();
-    }
-
-    _ = ui.pop_color();
-
-    ui.spacer(.y, 1);
-
-    // Action row
-    {
-        ui.next_axis(.x);
-        ui.next_width(.pct(1, 0));
-        ui.next_height(.children(1));
-        _ = ui.push_parent_box("", .{});
         defer ui.pop_parent();
 
-        ui.spacer(.x, 2);
+        build_counter_row(app, theme, counter_index);
+    }
+}
 
-        if (build_button("Reset All", theme).clicked()) {
-            app.counters = .{ 0, 0, 0 };
-        }
+fn build_counter_row(app: *App, theme: Theme, counter_index: usize) void {
+    ui.next_axis(.x);
+    ui.next_width(.pct(1, 0));
+    ui.next_height(.children(1));
+    _ = ui.push_parent_box("", .{});
+    defer ui.pop_parent();
 
-        ui.spacer(.x, 2);
+    ui.spacer(.x, 1);
 
-        const theme_label: []const u8 = if (app.theme == .dark) "Theme: Light##theme_toggle" else "Theme: Dark##theme_toggle";
-        if (build_button(theme_label, theme).clicked()) {
-            app.theme = if (app.theme == .dark) .light else .dark;
-        }
+    const label_str = ui.arena_print(" {s}: ", .{counter_labels[counter_index]}) catch " : ";
+    ui.next_width(.text(0, 1));
+    ui.next_height(.pct(1, 0));
+    _ = ui.push_color(theme.accent());
+    defer _ = ui.pop_color();
+    _ = ui.build_box(label_str, .{ .draw_text = true });
+
+    const dec_str = ui.arena_print(" - ##dec_{d}", .{counter_index}) catch " - ";
+    if (build_button(dec_str, theme).clicked()) {
+        app.counters[counter_index] -= 1;
     }
 
-    // Filler
+    ui.spacer(.x, 1);
+
+    const val_str = ui.arena_print(" {d} ", .{app.counters[counter_index]}) catch " 0 ";
+    const val_color: Color = if (app.counters[counter_index] < 0)
+        .{ .ansi = .red }
+    else if (app.counters[counter_index] > 0)
+        .{ .ansi = .green }
+    else
+        theme.fg();
+    ui.next_width(.text(0, 1));
+    ui.next_height(.pct(1, 0));
+    _ = ui.push_color(val_color);
+    defer _ = ui.pop_color();
+    _ = ui.build_box(val_str, .{ .draw_text = true });
+
+    ui.spacer(.x, 1);
+
+    const inc_str = ui.arena_print(" + ##inc_{d}", .{counter_index}) catch " + ";
+    if (build_button(inc_str, theme).clicked()) {
+        app.counters[counter_index] += 1;
+    }
+
+    ui.spacer(.x, 1);
+}
+
+fn build_action_row(app: *App, theme: Theme) void {
+    ui.next_axis(.x);
+    ui.next_width(.pct(1, 0));
+    ui.next_height(.children(1));
+    _ = ui.push_parent_box("", .{});
+    defer ui.pop_parent();
+
+    ui.spacer(.x, 2);
+
+    if (build_button("Reset All", theme).clicked()) {
+        app.counters = .{ 0, 0, 0 };
+    }
+
+    ui.spacer(.x, 2);
+
+    const theme_label: []const u8 = if (app.theme == .dark)
+        "Theme: Light##theme_toggle"
+    else
+        "Theme: Dark##theme_toggle";
+    if (build_button(theme_label, theme).clicked()) {
+        app.theme = if (app.theme == .dark) .light else .dark;
+    }
+}
+
+fn build_filler() void {
     ui.next_width(.pct(1, 0));
     ui.next_height(.pct(1, 0));
     _ = ui.build_box("", .{});
+}
 
-    // Status bar
-    {
-        ui.next_axis(.x);
-        ui.next_width(.pct(1, 1));
-        ui.next_height(.cells(1, 1));
-        ui.next_bg(theme.accent());
-        ui.next_border_color(theme.accent());
-        _ = ui.push_parent_box("", .{ .draw_background = true, .draw_border = true, .draw_side_top = true });
+fn build_status_bar(theme: Theme) void {
+    ui.next_axis(.x);
+    ui.next_width(.pct(1, 1));
+    ui.next_height(.cells(1, 1));
+    ui.next_bg(theme.accent());
+    ui.next_border_color(theme.accent());
+    _ = ui.push_parent_box("", .{ .draw_background = true, .draw_border = true, .draw_side_top = true });
+    defer ui.pop_parent();
 
-        ui.next_width(.pct(1, 0));
-        ui.next_height(.pct(1, 0));
-        ui.next_color(theme.bg());
-        _ = ui.build_box(" Mouse: click | Tab/Shift-Tab: focus | Enter: activate | q: quit", .{ .draw_text = true });
-
-        ui.pop_parent();
-    }
+    ui.next_width(.pct(1, 0));
+    ui.next_height(.pct(1, 0));
+    _ = ui.push_color(theme.bg());
+    defer _ = ui.pop_color();
+    _ = ui.build_box(" Mouse: click | Tab/Shift-Tab: focus | Enter: activate | q: quit", .{ .draw_text = true });
 }
 
 fn build_button(string: []const u8, theme: Theme) ui.Signal {
     ui.next_width(.text(2, 1));
     ui.next_height(.cells(3, 1));
-    ui.next_bg(theme.button_bg());
-    ui.next_color(theme.fg());
-    ui.next_border_color(theme.accent());
+    _ = ui.push_bg(theme.button_bg());
+    defer _ = ui.pop_bg();
+    _ = ui.push_color(theme.fg());
+    defer _ = ui.pop_color();
+    _ = ui.push_border_color(theme.accent());
+    defer _ = ui.pop_border_color();
     ui.next_text_padding(1);
     const box = ui.build_box(string, button_flags);
     return interaction.signal_from_box(box);

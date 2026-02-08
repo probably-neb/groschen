@@ -57,7 +57,13 @@ const App = struct {
     click_count: i32 = 0,
     message: []const u8 = "Welcome! Use Tab to navigate, Enter to activate.",
     message_color: Color = fg_color,
+    click_label_buf: [64]u8 = undefined,
 };
+
+fn format_click_label(app: *App) []const u8 {
+    return std.fmt.bufPrint(&app.click_label_buf, "Clicked: {d}##count_btn", .{app.click_count}) catch
+        "Clicked##count_btn";
+}
 
 // ---------------------------------------------------------------------------
 // UI construction with inline signals
@@ -65,116 +71,127 @@ const App = struct {
 
 fn build_ui(app: *App) !void {
     _ = ui.push_color(fg_color);
+    defer _ = ui.pop_color();
 
-    // Title bar
-    {
-        ui.next_axis(.x);
-        ui.next_width(.pct(1, 1));
-        ui.next_height(.cells(1, 1));
-        ui.next_bg(accent_color);
-        _ = ui.push_parent_box("", .{ .draw_background = true });
-
-        ui.next_width(.pct(1, 0));
-        ui.next_height(.pct(1, 0));
-        ui.next_color(bg_color);
-        _ = ui.build_box(" Groschen", .{ .draw_text = true });
-
-        ui.pop_parent();
-    }
+    build_title_bar();
 
     ui.spacer(.y, 1);
 
-    // Main content panel
-    {
-        ui.next_width(.pct(1, 0));
-        ui.next_height(.children(1));
-        ui.next_bg(panel_bg);
-        ui.next_border_color(muted_color);
-        _ = ui.push_parent_box(" Demo Panel ##main_panel", panel_flags);
+    build_main_panel(app);
 
-        ui.spacer(.y, 1);
-
-        // Message display
-        {
-            ui.next_width(.pct(1, 0));
-            ui.next_height(.cells(1, 1));
-            ui.next_color(app.message_color);
-            ui.next_text_padding(1);
-            _ = ui.build_box(app.message, .{ .draw_text = true });
-        }
-
-        ui.spacer(.y, 1);
-
-        // Button row
-        {
-            ui.next_axis(.x);
-            ui.next_width(.pct(1, 0));
-            ui.next_height(.children(1));
-            _ = ui.push_parent_box("", .{});
-
-            ui.spacer(.x, 2);
-
-            if (build_button("Hello##hello_btn").clicked()) {
-                app.message = "Hello from Groschen!";
-                app.message_color = success_color;
-            }
-
-            ui.spacer(.x, 1);
-
-            if (build_button(try ui.arena_print("Clicked: {d}##count_btn", .{app.click_count})).clicked()) {
-                app.click_count += 1;
-                app.message = "Button clicked!";
-                app.message_color = accent_color;
-            }
-
-            ui.spacer(.x, 1);
-
-            if (build_button("Reset##reset_btn").clicked()) {
-                app.click_count = 0;
-                app.message = "Counter reset.";
-                app.message_color = warning_color;
-            }
-
-            ui.spacer(.x, 2);
-
-            ui.pop_parent();
-        }
-
-        ui.spacer(.y, 1);
-
-        ui.pop_parent();
-    }
-
-    // Filler
     ui.next_width(.pct(1, 0));
     ui.next_height(.pct(1, 0));
     _ = ui.build_box("", .{});
 
-    // Status bar
-    {
-        ui.next_axis(.x);
-        ui.next_width(.pct(1, 1));
-        ui.next_height(.cells(1, 1));
-        ui.next_bg(accent_color);
-        _ = ui.push_parent_box("", .{ .draw_background = true });
+    build_status_bar();
+}
 
-        ui.next_width(.pct(1, 0));
-        ui.next_height(.pct(1, 0));
-        ui.next_color(bg_color);
-        _ = ui.build_box(" Tab: focus | Enter: activate | q/Esc: quit", .{ .draw_text = true });
+fn build_title_bar() void {
+    ui.next_axis(.x);
+    ui.next_width(.pct(1, 1));
+    ui.next_height(.cells(1, 1));
+    _ = ui.push_bg(accent_color);
+    defer _ = ui.pop_bg();
+    _ = ui.push_parent_box("", .{ .draw_background = true });
+    defer ui.pop_parent();
 
-        ui.pop_parent();
+    ui.next_width(.pct(1, 0));
+    ui.next_height(.pct(1, 0));
+    _ = ui.push_color(bg_color);
+    defer _ = ui.pop_color();
+    _ = ui.build_box(" Groschen", .{ .draw_text = true });
+}
+
+fn build_main_panel(app: *App) void {
+    ui.next_width(.pct(1, 0));
+    ui.next_height(.children(1));
+    _ = ui.push_bg(panel_bg);
+    defer _ = ui.pop_bg();
+    _ = ui.push_border_color(muted_color);
+    defer _ = ui.pop_border_color();
+    _ = ui.push_parent_box(" Demo Panel ##main_panel", panel_flags);
+    defer ui.pop_parent();
+
+    ui.spacer(.y, 1);
+
+    build_message_row(app);
+
+    ui.spacer(.y, 1);
+
+    build_button_row(app);
+
+    ui.spacer(.y, 1);
+}
+
+fn build_message_row(app: *App) void {
+    ui.next_width(.pct(1, 0));
+    ui.next_height(.cells(1, 1));
+    _ = ui.push_color(app.message_color);
+    defer _ = ui.pop_color();
+    _ = ui.push_text_padding(1);
+    defer _ = ui.pop_text_padding();
+    _ = ui.build_box(app.message, .{ .draw_text = true });
+}
+
+fn build_button_row(app: *App) void {
+    ui.next_axis(.x);
+    ui.next_width(.pct(1, 0));
+    ui.next_height(.children(1));
+    _ = ui.push_parent_box("", .{});
+    defer ui.pop_parent();
+
+    ui.spacer(.x, 2);
+
+    if (build_button("Hello##hello_btn").clicked()) {
+        app.message = "Hello from Groschen!";
+        app.message_color = success_color;
     }
 
-    _ = ui.pop_color();
+    ui.spacer(.x, 1);
+
+    const click_label = format_click_label(app);
+    if (build_button(click_label).clicked()) {
+        app.click_count += 1;
+        app.message = "Button clicked!";
+        app.message_color = accent_color;
+    }
+
+    ui.spacer(.x, 1);
+
+    if (build_button("Reset##reset_btn").clicked()) {
+        app.click_count = 0;
+        app.message = "Counter reset.";
+        app.message_color = warning_color;
+    }
+
+    ui.spacer(.x, 2);
+}
+
+fn build_status_bar() void {
+    ui.next_axis(.x);
+    ui.next_width(.pct(1, 1));
+    ui.next_height(.cells(1, 1));
+    _ = ui.push_bg(accent_color);
+    defer _ = ui.pop_bg();
+    _ = ui.push_parent_box("", .{ .draw_background = true });
+    defer ui.pop_parent();
+
+    ui.next_width(.pct(1, 0));
+    ui.next_height(.pct(1, 0));
+    _ = ui.push_color(bg_color);
+    defer _ = ui.pop_color();
+    _ = ui.build_box(" Tab: focus | Enter: activate | q/Esc: quit", .{ .draw_text = true });
 }
 
 fn build_button(string: []const u8) ui.Signal {
     ui.next_width(.text(2, 1));
     ui.next_height(.cells(3, 1));
-    ui.next_bg(button_bg);
-    ui.next_color(fg_color);
-    ui.next_border_color(accent_color);
+    _ = ui.push_bg(button_bg);
+    defer _ = ui.pop_bg();
+    _ = ui.push_color(fg_color);
+    defer _ = ui.pop_color();
+    _ = ui.push_border_color(accent_color);
+    defer _ = ui.pop_border_color();
     ui.next_text_padding(1);
     const box = ui.build_box(string, button_flags);
     return interaction.signal_from_box(box);

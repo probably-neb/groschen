@@ -224,3 +224,44 @@ Operations: `prepend`, `append`, `insert_after`, `insert_before`, `remove`, `pop
 | Short-lived temporary memory | `Arena.get_scratch` / `arena.scoped()` |
 | Repeated alloc/free on an arena | `Arena.FreeList` |
 | Passing arena to std lib APIs | `arena.allocator()` |
+
+## Arena Usage (Frame vs Persistent)
+
+- **Frame/UI arena** (`ui.get_build_arena()`, `ui.arena_print`, `ui.arena_dupe`) is **only valid for the current frame**. Pointers from these allocations must never be stored in `App` or any persistent state.
+- **Persistent state** must live in app-owned buffers or the long-lived arena (`perm_arena` or a dedicated arena). Use `std.fmt.bufPrint` into a fixed buffer on the state struct for labels/messages that persist across frames.
+- **Rules of thumb**
+  - ✅ Use `ui.arena_print` for one-off labels that are built and consumed in the same frame.
+  - ❌ Do not stash `ui.arena_print` results into `App` fields.
+  - ✅ For persistent text, store a `[]u8` buffer on the state and format into it.
+
+## Defer + Scoped Styles
+
+- Prefer `push_*` + `defer pop_*` for repeated styles.
+- **Always scope** a `push_*` with a block when it should not affect subsequent widgets.
+- Avoid leaked styles by keeping the `defer` as close as possible to the `push_*`.
+
+Example:
+
+```zig
+{
+    _ = ui.push_text_padding(1);
+    defer _ = ui.pop_text_padding();
+    _ = widgets.label("Name:");
+}
+```
+
+## UI Component Organization
+
+- Break large UI builders into **small named functions** (e.g. `build_title_bar`, `build_button_row`, `build_status_bar`).
+- Each function should:
+  - Configure only the styles it owns.
+  - Use `push_*`/`pop_*` with `defer` (no `next_*` for repeated styles).
+  - Return early rather than deeply nesting when possible.
+
+## Common Failure Modes
+
+- **Flickering text / garbled labels**: storing a `ui.arena_print` result in persistent state.
+- **Unexpected styling changes**: missing `pop_*` or a `push_*` not scoped with a block.
+- **Cross-component bleed**: using `next_*` for styles intended to persist across multiple widgets.
+
+When in doubt, assume UI allocations are frame-local and scope styles tightly.

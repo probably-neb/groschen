@@ -42,134 +42,156 @@ const scrollbar_fg: Color = .{ .ansi = .bright_white };
 
 fn build_ui(app: *App, visible_rows: u32) !void {
     _ = ui.push_color(fg_color);
+    defer _ = ui.pop_color();
 
-    // Title bar
-    {
-        ui.next_axis(.x);
-        ui.next_width(.pct(1, 1));
-        ui.next_height(.cells(1, 1));
-        ui.next_bg(accent_color);
-        _ = ui.push_parent_box("", .{ .draw_background = true });
+    build_title_bar();
+    try build_main_area(app, visible_rows);
+    try build_status_bar(app, visible_rows);
+}
 
-        ui.next_width(.pct(1, 0));
-        ui.next_height(.pct(1, 0));
-        ui.next_color(bg_color);
-        _ = ui.build_box(" Scroll Demo — Virtualized List", .{ .draw_text = true });
+fn build_title_bar() void {
+    ui.next_axis(.x);
+    ui.next_width(.pct(1, 1));
+    ui.next_height(.cells(1, 1));
+    _ = ui.push_bg(accent_color);
+    defer _ = ui.pop_bg();
+    _ = ui.push_parent_box("", .{ .draw_background = true });
+    defer ui.pop_parent();
 
-        ui.pop_parent();
+    ui.next_width(.pct(1, 0));
+    ui.next_height(.pct(1, 0));
+    _ = ui.push_color(bg_color);
+    defer _ = ui.pop_color();
+    _ = ui.build_box(" Scroll Demo — Virtualized List", .{ .draw_text = true });
+}
+
+fn build_main_area(app: *App, visible_rows: u32) !void {
+    ui.next_axis(.x);
+    ui.next_width(.pct(1, 1));
+    ui.next_height(.pct(1, 0));
+    _ = ui.push_parent_box("main_area###main", .{});
+    defer ui.pop_parent();
+
+    const scroll_box = try build_scroll_container(app, visible_rows);
+    handle_scroll_input(app, scroll_box, visible_rows);
+    build_scrollbar(app, visible_rows);
+}
+
+fn build_scroll_container(app: *App, visible_rows: u32) !*ui.Box {
+    ui.next_width(.pct(1, 0));
+    ui.next_height(.pct(1, 1));
+    _ = ui.push_bg(.{ .rgb = .{ 20, 20, 30 } });
+    defer _ = ui.pop_bg();
+    const scroll_box = ui.push_parent_box("scroll_list###scroll", .{
+        .clickable = true,
+        .view_scroll = true,
+        .focus_hot = true,
+        .draw_background = true,
+    });
+    defer ui.pop_parent();
+
+    const max_offset = max_scroll_offset(visible_rows);
+    const offset: u32 = @intCast(@max(0, @min(app.scroll_offset, max_offset)));
+    const end: u32 = @min(offset + visible_rows, total_items);
+
+    for (offset..end) |item_index| {
+        build_scroll_row(app, @intCast(item_index));
     }
 
-    // Main area: scroll container + scrollbar
-    {
-        ui.next_axis(.x);
-        ui.next_width(.pct(1, 1));
-        ui.next_height(.pct(1, 0));
-        _ = ui.push_parent_box("main_area###main", .{});
+    return scroll_box;
+}
 
-        // Scroll container
-        ui.next_width(.pct(1, 0));
-        ui.next_height(.pct(1, 1));
-        ui.next_bg(.{ .rgb = .{ 20, 20, 30 } });
-        const scroll_box = ui.push_parent_box("scroll_list###scroll", .{
-            .clickable = true,
-            .view_scroll = true,
-            .focus_hot = true,
-            .draw_background = true,
-        });
+fn build_scroll_row(app: *App, index: u32) void {
+    const is_selected = if (app.selected) |s| s == index else false;
+    const row_bg: Color = if (is_selected)
+        selected_bg
+    else if (index % 2 == 0)
+        even_bg
+    else
+        odd_bg;
 
+    const item_str = ui.arena_print(" Item {d}###item_{d}", .{ index, index }) catch " Item ";
+    ui.next_width(.pct(1, 1));
+    ui.next_height(.cells(1, 1));
+    _ = ui.push_bg(row_bg);
+    defer _ = ui.pop_bg();
+    _ = ui.push_color(if (is_selected) accent_color else fg_color);
+    defer _ = ui.pop_color();
+    const item_box = ui.build_box(item_str, .{
+        .clickable = true,
+        .draw_background = true,
+        .draw_text = true,
+    });
+
+    const item_sig = interaction.signal_from_box(item_box);
+    if (item_sig.flags.left_clicked) {
+        app.selected = index;
+    }
+}
+
+fn handle_scroll_input(app: *App, scroll_box: *ui.Box, visible_rows: u32) void {
+    const scroll_sig = interaction.signal_from_box(scroll_box);
+    if (scroll_sig.scroll[1] != 0) {
+        apply_scroll(app, scroll_sig.scroll[1] * scroll_speed, visible_rows);
+    }
+
+    if (interaction.get_focus_hot_key().eql(scroll_box.key)) {
+        handle_keyboard_scroll(app, visible_rows);
+    }
+}
+
+fn build_scrollbar(app: *App, visible_rows: u32) void {
+    ui.next_width(.cells(1, 1));
+    ui.next_height(.pct(1, 1));
+    _ = ui.push_bg(scrollbar_bg);
+    defer _ = ui.pop_bg();
+    _ = ui.push_parent_box("scrollbar###sbar", .{ .draw_background = true });
+    defer ui.pop_parent();
+
+    if (visible_rows < total_items and visible_rows > 0) {
         const max_offset = max_scroll_offset(visible_rows);
         const offset: u32 = @intCast(@max(0, @min(app.scroll_offset, max_offset)));
-        const end: u32 = @min(offset + visible_rows, total_items);
+        const track_h: f32 = @floatFromInt(visible_rows);
+        const thumb_h_f = @max(1.0, track_h * @as(f32, @floatFromInt(visible_rows)) / @as(f32, @floatFromInt(total_items)));
+        const thumb_pos_f = track_h * @as(f32, @floatFromInt(offset)) / @as(f32, @floatFromInt(total_items));
 
-        for (offset..end) |i| {
-            const idx: u32 = @intCast(i);
-            const is_selected = if (app.selected) |s| s == idx else false;
-            const row_bg: Color = if (is_selected) selected_bg else if (idx % 2 == 0) even_bg else odd_bg;
-
-            const item_str = try ui.arena_print(" Item {d}###item_{d}", .{ idx, idx });
-            ui.next_width(.pct(1, 1));
-            ui.next_height(.cells(1, 1));
-            ui.next_bg(row_bg);
-            ui.next_color(if (is_selected) accent_color else fg_color);
-            const item_box = ui.build_box(item_str, .{
-                .clickable = true,
-                .draw_background = true,
-                .draw_text = true,
-            });
-
-            const item_sig = interaction.signal_from_box(item_box);
-            if (item_sig.flags.left_clicked) {
-                app.selected = idx;
-            }
-        }
-
-        ui.pop_parent(); // scroll container
-
-        // Scroll signal
-        const scroll_sig = interaction.signal_from_box(scroll_box);
-        if (scroll_sig.scroll[1] != 0)
-            apply_scroll(app, scroll_sig.scroll[1] * scroll_speed, visible_rows);
-
-        // Keyboard scrolling when the scroll container is focused
-        if (interaction.get_focus_hot_key().eql(scroll_box.key)) {
-            handle_keyboard_scroll(app, visible_rows);
-        }
-
-        // Scrollbar track
         ui.next_width(.cells(1, 1));
-        ui.next_height(.pct(1, 1));
-        ui.next_bg(scrollbar_bg);
-        _ = ui.push_parent_box("scrollbar###sbar", .{ .draw_background = true });
+        ui.next_height(.cells(thumb_pos_f, 1));
+        _ = ui.build_box("", .{});
 
-        if (visible_rows < total_items and visible_rows > 0) {
-            const track_h: f32 = @floatFromInt(visible_rows);
-            const thumb_h_f = @max(1.0, track_h * @as(f32, @floatFromInt(visible_rows)) / @as(f32, @floatFromInt(total_items)));
-            const thumb_pos_f = track_h * @as(f32, @floatFromInt(offset)) / @as(f32, @floatFromInt(total_items));
-
-            ui.next_width(.cells(1, 1));
-            ui.next_height(.cells(thumb_pos_f, 1));
-            _ = ui.build_box("", .{});
-
-            ui.next_width(.cells(1, 1));
-            ui.next_height(.cells(thumb_h_f, 1));
-            ui.next_bg(scrollbar_fg);
-            _ = ui.build_box("scrollbar_thumb###thumb", .{ .draw_background = true });
-        }
-
-        ui.pop_parent(); // scrollbar
-
-        ui.pop_parent(); // main area
+        ui.next_width(.cells(1, 1));
+        ui.next_height(.cells(thumb_h_f, 1));
+        _ = ui.push_bg(scrollbar_fg);
+        defer _ = ui.pop_bg();
+        _ = ui.build_box("scrollbar_thumb###thumb", .{ .draw_background = true });
     }
+}
 
-    // Status bar
-    {
-        const max_off = max_scroll_offset(visible_rows);
-        const current_offset: u32 = @intCast(@max(0, @min(app.scroll_offset, max_off)));
-        const current_end: u32 = @min(current_offset + visible_rows, total_items);
-        const sel_str: []const u8 = if (app.selected) |s| blk: {
-            break :blk try ui.arena_print("  Selected: {d}", .{s});
-        } else "";
+fn build_status_bar(app: *App, visible_rows: u32) !void {
+    const max_off = max_scroll_offset(visible_rows);
+    const current_offset: u32 = @intCast(@max(0, @min(app.scroll_offset, max_off)));
+    const current_end: u32 = @min(current_offset + visible_rows, total_items);
+    const sel_str: []const u8 = if (app.selected) |s| blk: {
+        break :blk ui.arena_print("  Selected: {d}", .{s}) catch "";
+    } else "";
+    const status_str = try ui.arena_print(
+        " Showing {d}-{d} of {d}  Offset: {d}{s}",
+        .{ current_offset, if (current_end > 0) current_end - 1 else 0, total_items, current_offset, sel_str },
+    );
 
-        const status_str = try ui.arena_print(
-            " Showing {d}-{d} of {d}  Offset: {d}{s}",
-            .{ current_offset, if (current_end > 0) current_end - 1 else 0, total_items, current_offset, sel_str },
-        );
+    ui.next_axis(.x);
+    ui.next_width(.pct(1, 1));
+    ui.next_height(.cells(1, 1));
+    _ = ui.push_bg(accent_color);
+    defer _ = ui.pop_bg();
+    _ = ui.push_parent_box("", .{ .draw_background = true });
+    defer ui.pop_parent();
 
-        ui.next_axis(.x);
-        ui.next_width(.pct(1, 1));
-        ui.next_height(.cells(1, 1));
-        ui.next_bg(accent_color);
-        _ = ui.push_parent_box("", .{ .draw_background = true });
-
-        ui.next_width(.pct(1, 0));
-        ui.next_height(.pct(1, 0));
-        ui.next_color(bg_color);
-        _ = ui.build_box(status_str, .{ .draw_text = true });
-
-        ui.pop_parent();
-    }
-
-    _ = ui.pop_color();
+    ui.next_width(.pct(1, 0));
+    ui.next_height(.pct(1, 0));
+    _ = ui.push_color(bg_color);
+    defer _ = ui.pop_color();
+    _ = ui.build_box(status_str, .{ .draw_text = true });
 }
 
 fn max_scroll_offset(visible_rows: u32) i32 {

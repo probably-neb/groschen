@@ -548,6 +548,7 @@ pub fn init_all() !void {
     g.arenas[0] = try Arena.init(.{});
     g.arenas[1] = try Arena.init(.{});
     g.stacks = init_stacks();
+    interaction.reset();
 }
 
 pub fn deinit() void {
@@ -847,61 +848,61 @@ pub fn next_min_height(v: f32) void {
 
 pub fn build_box(string: []const u8, extra_flags: BoxFlags) *Box {
     const arena = current_arena(&g);
-    const b = arena.create(Box) catch @panic("OOM: build_box");
-    b.* = .{};
+    const box = arena.create(Box) catch @panic("OOM: build_box");
+    box.* = .{};
 
     const tag = parse_tag(string);
-    b.string = string;
-    b.display_string = tag.display;
+    box.string = string;
+    box.display_string = tag.display;
 
     const parent_box = top_stack(.parent);
     const seed: u64 = if (parent_box) |p| p.key.value else 0;
-    b.key = Key.from_string(seed, tag.hash_string);
+    box.key = Key.from_string(seed, tag.hash_string);
 
-    const old = if (!b.key.is_zero()) box_table_lookup(b.key) else null;
+    const old = if (!box.key.is_zero()) box_table_lookup(box.key) else null;
     if (old) |prev| {
-        b.first_touched_build_index = prev.first_touched_build_index;
-        b.hot_t = prev.hot_t;
-        b.active_t = prev.active_t;
-        b.disabled_t = prev.disabled_t;
-        b.focus_hot_t = prev.focus_hot_t;
-        b.focus_active_t = prev.focus_active_t;
-        b.view_off = prev.view_off;
-        b.view_off_target = prev.view_off_target;
-        b.view_bounds = prev.view_bounds;
-        b.position_delta = .{
-            @as(f32, @floatFromInt(b.rect.col)) - @as(f32, @floatFromInt(prev.rect.col)),
-            @as(f32, @floatFromInt(b.rect.row)) - @as(f32, @floatFromInt(prev.rect.row)),
+        box.first_touched_build_index = prev.first_touched_build_index;
+        box.hot_t = prev.hot_t;
+        box.active_t = prev.active_t;
+        box.disabled_t = prev.disabled_t;
+        box.focus_hot_t = prev.focus_hot_t;
+        box.focus_active_t = prev.focus_active_t;
+        box.view_off = prev.view_off;
+        box.view_off_target = prev.view_off_target;
+        box.view_bounds = prev.view_bounds;
+        box.position_delta = .{
+            @as(f32, @floatFromInt(box.rect.col)) - @as(f32, @floatFromInt(prev.rect.col)),
+            @as(f32, @floatFromInt(box.rect.row)) - @as(f32, @floatFromInt(prev.rect.row)),
         };
-        b.rect = prev.rect;
+        box.rect = prev.rect;
         box_table_remove(prev);
     } else {
-        b.first_touched_build_index = g.build_index;
+        box.first_touched_build_index = g.build_index;
     }
-    b.last_touched_build_index = g.build_index;
+    box.last_touched_build_index = g.build_index;
 
-    b.flags = BoxFlags.merge(top_stack(.flags), extra_flags);
-    if (tag.has_display_string) b.flags.has_display_string = true;
-    b.child_layout_axis = top_stack(.child_layout_axis);
-    b.pref_size = .{ top_stack(.pref_width), top_stack(.pref_height) };
-    b.bg_color = top_stack(.bg_color);
-    b.fg_color = top_stack(.fg_color);
-    b.border_color = top_stack(.border_color);
-    b.text_padding = top_stack(.text_padding);
-    b.text_align = top_stack(.text_align);
-    b.fixed_position = .{ top_stack(.fixed_x), top_stack(.fixed_y) };
-    b.fixed_size = .{ top_stack(.fixed_width), top_stack(.fixed_height) };
-    b.min_size = .{ top_stack(.min_width), top_stack(.min_height) };
+    box.flags = BoxFlags.merge(top_stack(.flags), extra_flags);
+    if (tag.has_display_string) box.flags.has_display_string = true;
+    box.child_layout_axis = top_stack(.child_layout_axis);
+    box.pref_size = .{ top_stack(.pref_width), top_stack(.pref_height) };
+    box.bg_color = top_stack(.bg_color);
+    box.fg_color = top_stack(.fg_color);
+    box.border_color = top_stack(.border_color);
+    box.text_padding = top_stack(.text_padding);
+    box.text_align = top_stack(.text_align);
+    box.fixed_position = .{ top_stack(.fixed_x), top_stack(.fixed_y) };
+    box.fixed_size = .{ top_stack(.fixed_width), top_stack(.fixed_height) };
+    box.min_size = .{ top_stack(.min_width), top_stack(.min_height) };
 
-    if (!b.key.is_zero()) {
-        box_table_insert(b);
+    if (!box.key.is_zero()) {
+        box_table_insert(box);
     }
 
-    if (parent_box) |p| push_child(p, b);
+    if (parent_box) |p| push_child(p, box);
 
     auto_pop_all(&g.stacks);
 
-    return b;
+    return box;
 }
 
 /// Build a box and push it as the current parent.

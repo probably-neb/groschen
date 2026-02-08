@@ -29,10 +29,13 @@ const warning_color: Color = .{ .ansi = .yellow };
 
 const total_list_items: usize = 200;
 
+const DEFAULT_MESSAGE = "Welcome! Tab to navigate, Enter to activate.";
+
 const App = struct {
     click_count: i32 = 0,
-    message: []const u8 = "Welcome! Tab to navigate, Enter to activate.",
+    message: []const u8 = "",
     message_color: Color = fg_color,
+    message_buf: [256]u8 = undefined,
 
     name_buf: [128]u8 = [_]u8{0} ** 128,
     name_state: widgets.Line_Edit_State = undefined,
@@ -46,11 +49,21 @@ const App = struct {
     details_open: bool = true,
     settings_open: bool = false,
 
-    fn init(self: *App) void {
-        self.name_state = .{ .buffer = &self.name_buf };
-        self.search_state = .{ .buffer = &self.search_buf };
+    fn init(app: *App) void {
+        app.message = DEFAULT_MESSAGE;
+        app.name_state = .{ .buffer = &app.name_buf };
+        app.search_state = .{ .buffer = &app.search_buf };
     }
 };
+
+fn set_message(app: *App, message: []const u8) void {
+    app.message = message;
+}
+
+fn set_message_fmt(app: *App, comptime format: []const u8, args: anytype, fallback: []const u8) void {
+    const msg = std.fmt.bufPrint(&app.message_buf, format, args) catch fallback;
+    app.message = msg;
+}
 
 // ---------------------------------------------------------------------------
 // Build with inline signals
@@ -58,293 +71,311 @@ const App = struct {
 
 fn build_ui(app: *App) !void {
     _ = ui.push_color(fg_color);
+    defer _ = ui.pop_color();
 
-    // Title bar
+    build_title_bar();
+    try build_main_area(app);
+    try build_status_bar(app);
+}
+
+fn build_title_bar() void {
+    ui.next_axis(.x);
+    ui.next_width(.pct(1, 1));
+    ui.next_height(.cells(1, 1));
+    ui.next_bg(accent_color);
+    _ = ui.push_parent_box("", .{ .draw_background = true });
+    defer ui.pop_parent();
+
+    ui.next_width(.pct(1, 0));
+    ui.next_height(.pct(1, 0));
+    _ = ui.push_color(bg_color);
+    defer _ = ui.pop_color();
+    _ = ui.build_box(" Widget Demo — All Widgets", .{ .draw_text = true });
+}
+
+fn build_main_area(app: *App) !void {
+    ui.next_axis(.x);
+    ui.next_width(.pct(1, 1));
+    ui.next_height(.pct(1, 0));
+    _ = ui.push_parent_box("main###main_area", .{});
+    defer ui.pop_parent();
+
+    try build_left_column(app);
+    try build_right_column(app);
+}
+
+fn build_left_column(app: *App) !void {
+    ui.next_width(.pct(0.5, 0));
+    ui.next_height(.pct(1, 1));
+    _ = ui.push_parent_box("left_col###left", .{});
+    defer ui.pop_parent();
+
+    ui.spacer(.y, 1);
+
+    try build_basic_widgets_panel(app);
+
+    ui.spacer(.y, 1);
+
+    try build_text_input_panel(app);
+
+    ui.next_width(.pct(1, 0));
+    ui.next_height(.pct(1, 0));
+    _ = ui.build_box("", .{});
+}
+
+fn build_basic_widgets_panel(app: *App) !void {
+    ui.next_width(.pct(1, 0));
+    _ = ui.push_bg(panel_bg);
+    defer _ = ui.pop_bg();
+    _ = ui.push_border_color(muted_color);
+    defer _ = ui.pop_border_color();
+    _ = widgets.panel_begin(" Basic Widgets ##basic_panel");
+    defer widgets.panel_end();
+
+    ui.spacer(.y, 1);
+
+    _ = ui.push_text_padding(1);
+    defer _ = ui.pop_text_padding();
+    _ = widgets.label("This is a label widget.");
+
+    ui.spacer(.y, 1);
+
+    widgets.separator();
+
+    ui.spacer(.y, 1);
+
+    _ = ui.push_text_padding(1);
+    defer _ = ui.pop_text_padding();
+    _ = ui.push_color(app.message_color);
+    defer _ = ui.pop_color();
+    _ = widgets.label(app.message);
+
+    ui.spacer(.y, 1);
+
+    build_button_row(app);
+
+    ui.spacer(.y, 1);
+}
+
+fn build_button_row(app: *App) void {
+    ui.next_axis(.x);
+    ui.next_width(.pct(1, 0));
+    ui.next_height(.children(1));
+    _ = ui.push_parent_box("btn_row###btn_row", .{});
+    defer ui.pop_parent();
+
+    ui.spacer(.x, 1);
+
+    if (build_button("Greet##greet_btn", accent_color)) {
+        if (app.name_state.len > 0) {
+            set_message_fmt(app, "Hello, {s}!", .{app.name_buf[0..app.name_state.len]}, "Hello!");
+            app.message_color = success_color;
+        } else {
+            set_message(app, "Hello, stranger!");
+            app.message_color = success_color;
+        }
+    }
+
+    ui.spacer(.x, 1);
+
+    const click_label = ui.arena_print("Clicks: {d}##count_btn", .{app.click_count}) catch "Clicks";
+    if (build_button(click_label, accent_color)) {
+        app.click_count += 1;
+        set_message(app, "Button clicked!");
+        app.message_color = accent_color;
+    }
+
+    ui.spacer(.x, 1);
+
+    if (build_button("Reset##reset_btn", warning_color)) {
+        app.click_count = 0;
+        set_message(app, "Counter reset.");
+        app.message_color = warning_color;
+    }
+
+    ui.spacer(.x, 1);
+}
+
+fn build_button(label: []const u8, border_color: Color) bool {
+    _ = ui.push_bg(button_bg);
+    defer _ = ui.pop_bg();
+    _ = ui.push_border_color(border_color);
+    defer _ = ui.pop_border_color();
+    return widgets.button(label).clicked();
+}
+
+fn build_text_input_panel(app: *App) !void {
+    ui.next_width(.pct(1, 0));
+    _ = ui.push_bg(panel_bg);
+    defer _ = ui.pop_bg();
+    _ = ui.push_border_color(muted_color);
+    defer _ = ui.pop_border_color();
+    _ = widgets.panel_begin(" Text Input ##input_panel");
+    defer widgets.panel_end();
+
+    ui.spacer(.y, 1);
+
     {
-        ui.next_axis(.x);
-        ui.next_width(.pct(1, 1));
-        ui.next_height(.cells(1, 1));
-        ui.next_bg(accent_color);
-        _ = ui.push_parent_box("", .{ .draw_background = true });
+        _ = ui.push_text_padding(1);
+        defer _ = ui.pop_text_padding();
+        _ = widgets.label("Name:");
+    }
 
+    {
         ui.next_width(.pct(1, 0));
-        ui.next_height(.pct(1, 0));
-        ui.next_color(bg_color);
-        _ = ui.build_box(" Widget Demo — All Widgets", .{ .draw_text = true });
-
-        ui.pop_parent();
+        _ = ui.push_bg(input_bg);
+        defer _ = ui.pop_bg();
+        _ = ui.push_border_color(muted_color);
+        defer _ = ui.pop_border_color();
+        _ = widgets.line_edit("name_field###name_edit", &app.name_state);
     }
 
-    // Main content — two columns
+    ui.spacer(.y, 1);
+
     {
-        ui.next_axis(.x);
-        ui.next_width(.pct(1, 1));
-        ui.next_height(.pct(1, 0));
-        _ = ui.push_parent_box("main###main_area", .{});
-
-        // Left column
-        {
-            ui.next_width(.pct(0.5, 0));
-            ui.next_height(.pct(1, 1));
-            _ = ui.push_parent_box("left_col###left", .{});
-
-            ui.spacer(.y, 1);
-
-            // Basic widgets panel
-            {
-                ui.next_width(.pct(1, 0));
-                ui.next_bg(panel_bg);
-                ui.next_border_color(muted_color);
-                _ = widgets.panel_begin(" Basic Widgets ##basic_panel");
-
-                ui.spacer(.y, 1);
-
-                // Labels
-                ui.next_text_padding(1);
-                _ = widgets.label("This is a label widget.");
-
-                ui.spacer(.y, 1);
-
-                widgets.separator();
-
-                ui.spacer(.y, 1);
-
-                // Message display
-                ui.next_text_padding(1);
-                ui.next_color(app.message_color);
-                _ = widgets.label(app.message);
-                ui.next_color(fg_color);
-
-                ui.spacer(.y, 1);
-
-                // Button row
-                {
-                    ui.next_axis(.x);
-                    ui.next_width(.pct(1, 0));
-                    ui.next_height(.children(1));
-                    _ = ui.push_parent_box("btn_row###btn_row", .{});
-
-                    ui.spacer(.x, 1);
-
-                    ui.next_bg(button_bg);
-                    ui.next_border_color(accent_color);
-                    if (widgets.button("Greet##greet_btn").clicked()) {
-                        if (app.name_state.len > 0) {
-                            app.message = ui.arena_print("Hello, {s}!", .{app.name_buf[0..app.name_state.len]}) catch "Hello!";
-                            app.message_color = success_color;
-                        } else {
-                            app.message = "Hello, stranger!";
-                            app.message_color = success_color;
-                        }
-                    }
-
-                    ui.spacer(.x, 1);
-
-                    ui.next_bg(button_bg);
-                    ui.next_border_color(accent_color);
-                    if (widgets.button(
-                        try ui.arena_print("Clicks: {d}##count_btn", .{app.click_count}),
-                    ).clicked()) {
-                        app.click_count += 1;
-                        app.message = "Button clicked!";
-                        app.message_color = accent_color;
-                    }
-
-                    ui.spacer(.x, 1);
-
-                    ui.next_bg(button_bg);
-                    ui.next_border_color(warning_color);
-                    if (widgets.button("Reset##reset_btn").clicked()) {
-                        app.click_count = 0;
-                        app.message = "Counter reset.";
-                        app.message_color = warning_color;
-                    }
-
-                    ui.spacer(.x, 1);
-
-                    ui.pop_parent();
-                }
-
-                ui.spacer(.y, 1);
-
-                widgets.panel_end();
-            }
-
-            ui.spacer(.y, 1);
-
-            // Text input panel
-            {
-                ui.next_width(.pct(1, 0));
-                ui.next_bg(panel_bg);
-                ui.next_border_color(muted_color);
-                _ = widgets.panel_begin(" Text Input ##input_panel");
-
-                ui.spacer(.y, 1);
-
-                ui.next_text_padding(1);
-                _ = widgets.label("Name:");
-
-                ui.next_width(.pct(1, 0));
-                ui.next_bg(input_bg);
-                ui.next_border_color(muted_color);
-                _ = widgets.line_edit("name_field###name_edit", &app.name_state);
-
-                ui.spacer(.y, 1);
-
-                ui.next_text_padding(1);
-                _ = widgets.label("Search:");
-
-                ui.next_width(.pct(1, 0));
-                ui.next_bg(input_bg);
-                ui.next_border_color(muted_color);
-                _ = widgets.line_edit("search_field###search_edit", &app.search_state);
-
-                ui.spacer(.y, 1);
-
-                widgets.panel_end();
-            }
-
-            // Filler
-            ui.next_width(.pct(1, 0));
-            ui.next_height(.pct(1, 0));
-            _ = ui.build_box("", .{});
-
-            ui.pop_parent();
-        }
-
-        // Right column
-        {
-            ui.next_width(.pct(0.5, 0));
-            ui.next_height(.pct(1, 1));
-            _ = ui.push_parent_box("right_col###right", .{});
-
-            ui.spacer(.y, 1);
-
-            // Collapsible sections
-            {
-                ui.next_width(.pct(1, 0));
-                ui.next_bg(panel_bg);
-                ui.next_border_color(muted_color);
-                _ = widgets.panel_begin(" Collapsible Sections ##collapse_panel");
-
-                ui.spacer(.y, 1);
-
-                // Details section
-                ui.next_bg(.{ .rgb = .{ 40, 40, 55 } });
-                _ = widgets.collapsible_header("Details###details_sec", &app.details_open);
-
-                if (app.details_open) {
-                    ui.next_text_padding(2);
-                    _ = widgets.label("This section can be collapsed.");
-                    ui.next_text_padding(2);
-                    _ = widgets.label("Click the header or press Enter.");
-                    ui.spacer(.y, 1);
-                }
-
-                // Settings section
-                ui.next_bg(.{ .rgb = .{ 40, 40, 55 } });
-                _ = widgets.collapsible_header("Settings###settings_sec", &app.settings_open);
-
-                if (app.settings_open) {
-                    ui.next_text_padding(2);
-                    _ = widgets.label("Setting 1: enabled");
-                    ui.next_text_padding(2);
-                    _ = widgets.label("Setting 2: disabled");
-                    ui.next_text_padding(2);
-                    _ = widgets.label("Setting 3: auto");
-                    ui.spacer(.y, 1);
-                }
-
-                widgets.panel_end();
-            }
-
-            ui.spacer(.y, 1);
-
-            // Scroll list
-            {
-                ui.next_axis(.x);
-                ui.next_width(.pct(1, 0));
-                ui.next_height(.pct(1, 0));
-                _ = ui.push_parent_box("scroll_area###scroll_wrap", .{});
-
-                ui.next_width(.pct(1, 0));
-                ui.next_height(.pct(1, 1));
-                ui.next_bg(.{ .rgb = .{ 15, 15, 25 } });
-                var view = widgets.scroll_list_begin(
-                    "item_list###scroll_list",
-                    total_list_items,
-                    1,
-                    &app.scroll_state,
-                );
-
-                for (view.first_visible..view.first_visible + view.visible_count) |index| {
-                    const is_selected = if (app.selected_item) |s| s == index else false;
-                    const row_bg: Color = if (is_selected)
-                        .{ .rgb = .{ 50, 50, 90 } }
-                    else if (index % 2 == 0)
-                        .{ .rgb = .{ 20, 20, 32 } }
-                    else
-                        .{ .rgb = .{ 28, 28, 40 } };
-
-                    const item_str = try ui.arena_print(" Item {d}###list_item_{d}", .{ index, index });
-                    ui.next_width(.pct(1, 1));
-                    ui.next_height(.cells(1, 1));
-                    ui.next_bg(row_bg);
-                    ui.next_color(if (is_selected) accent_color else fg_color);
-                    const item_box = ui.build_box(item_str, .{
-                        .clickable = true,
-                        .draw_background = true,
-                        .draw_text = true,
-                    });
-
-                    const item_sig = interaction.signal_from_box(item_box);
-                    if (item_sig.flags.left_clicked) {
-                        app.selected_item = index;
-                        app.message = ui.arena_print("Selected item {d}", .{index}) catch "Selected item";
-                        app.message_color = accent_color;
-                    }
-                }
-
-                _ = widgets.scroll_list_end(&view);
-
-                widgets.scrollbar(&view);
-
-                ui.pop_parent();
-            }
-
-            ui.pop_parent();
-        }
-
-        ui.pop_parent();
+        _ = ui.push_text_padding(1);
+        defer _ = ui.pop_text_padding();
+        _ = widgets.label("Search:");
     }
 
-    _ = ui.pop_color();
-
-    // Status bar
     {
-        ui.next_axis(.x);
-        ui.next_width(.pct(1, 1));
-        ui.next_height(.cells(1, 1));
-        ui.next_bg(accent_color);
-        _ = ui.push_parent_box("", .{ .draw_background = true });
+        ui.next_width(.pct(1, 0));
+        _ = ui.push_bg(input_bg);
+        defer _ = ui.pop_bg();
+        _ = ui.push_border_color(muted_color);
+        defer _ = ui.pop_border_color();
+        _ = widgets.line_edit("search_field###search_edit", &app.search_state);
+    }
 
-        const name_str = if (app.name_state.len > 0)
-            app.name_buf[0..app.name_state.len]
+    ui.spacer(.y, 1);
+}
+
+fn build_right_column(app: *App) !void {
+    ui.next_width(.pct(0.5, 0));
+    ui.next_height(.pct(1, 1));
+    _ = ui.push_parent_box("right_col###right", .{});
+    defer ui.pop_parent();
+
+    ui.spacer(.y, 1);
+
+    build_collapsible_panel(app);
+
+    ui.spacer(.y, 1);
+
+    try build_scroll_list(app);
+}
+
+fn build_collapsible_panel(app: *App) void {
+    ui.next_width(.pct(1, 0));
+    _ = ui.push_bg(panel_bg);
+    defer _ = ui.pop_bg();
+    _ = ui.push_border_color(muted_color);
+    defer _ = ui.pop_border_color();
+    _ = widgets.panel_begin(" Collapsible Sections ##collapse_panel");
+    defer widgets.panel_end();
+
+    ui.spacer(.y, 1);
+
+    _ = ui.push_bg(.{ .rgb = .{ 40, 40, 55 } });
+    defer _ = ui.pop_bg();
+    _ = widgets.collapsible_header("Details###details_sec", &app.details_open);
+
+    if (app.details_open) {
+        _ = ui.push_text_padding(2);
+        defer _ = ui.pop_text_padding();
+        _ = widgets.label("This section can be collapsed.");
+        _ = widgets.label("Click the header or press Enter.");
+        ui.spacer(.y, 1);
+    }
+
+    _ = ui.push_bg(.{ .rgb = .{ 40, 40, 55 } });
+    defer _ = ui.pop_bg();
+    _ = widgets.collapsible_header("Settings###settings_sec", &app.settings_open);
+
+    if (app.settings_open) {
+        _ = ui.push_text_padding(2);
+        defer _ = ui.pop_text_padding();
+        _ = widgets.label("Setting 1: enabled");
+        _ = widgets.label("Setting 2: disabled");
+        _ = widgets.label("Setting 3: auto");
+        ui.spacer(.y, 1);
+    }
+}
+
+fn build_scroll_list(app: *App) !void {
+    ui.next_axis(.x);
+    ui.next_width(.pct(1, 0));
+    ui.next_height(.pct(1, 0));
+    _ = ui.push_parent_box("scroll_area###scroll_wrap", .{});
+    defer ui.pop_parent();
+
+    ui.next_width(.pct(1, 0));
+    ui.next_height(.pct(1, 1));
+    ui.next_bg(.{ .rgb = .{ 15, 15, 25 } });
+    var view = widgets.scroll_list_begin(
+        "item_list###scroll_list",
+        total_list_items,
+        1,
+        &app.scroll_state,
+    );
+
+    for (view.first_visible..view.first_visible + view.visible_count) |index| {
+        const is_selected = if (app.selected_item) |s| s == index else false;
+        const row_bg: Color = if (is_selected)
+            .{ .rgb = .{ 50, 50, 90 } }
+        else if (index % 2 == 0)
+            .{ .rgb = .{ 20, 20, 32 } }
         else
-            "—";
+            .{ .rgb = .{ 28, 28, 40 } };
 
-        const status = try ui.arena_print(
-            " Tab: focus | Enter: activate | q/Esc: quit | Name: {s} | Items: {d}",
-            .{ name_str, total_list_items },
-        );
+        const item_str = try ui.arena_print(" Item {d}###list_item_{d}", .{ index, index });
+        ui.next_width(.pct(1, 1));
+        ui.next_height(.cells(1, 1));
+        _ = ui.push_bg(row_bg);
+        defer _ = ui.pop_bg();
+        _ = ui.push_color(if (is_selected) accent_color else fg_color);
+        defer _ = ui.pop_color();
+        const item_box = ui.build_box(item_str, .{
+            .clickable = true,
+            .draw_background = true,
+            .draw_text = true,
+        });
 
-        ui.next_width(.pct(1, 0));
-        ui.next_height(.pct(1, 0));
-        ui.next_color(bg_color);
-        _ = ui.build_box(status, .{ .draw_text = true });
-
-        ui.pop_parent();
+        const item_sig = interaction.signal_from_box(item_box);
+        if (item_sig.flags.left_clicked) {
+            app.selected_item = index;
+            set_message_fmt(app, "Selected item {d}", .{index}, "Selected item");
+            app.message_color = accent_color;
+        }
     }
+
+    _ = widgets.scroll_list_end(&view);
+    widgets.scrollbar(&view);
+}
+
+fn build_status_bar(app: *App) !void {
+    ui.next_axis(.x);
+    ui.next_width(.pct(1, 1));
+    ui.next_height(.cells(1, 1));
+    ui.next_bg(accent_color);
+    _ = ui.push_parent_box("", .{ .draw_background = true });
+    defer ui.pop_parent();
+
+    const name_str = if (app.name_state.len > 0)
+        app.name_buf[0..app.name_state.len]
+    else
+        "—";
+
+    const status = try ui.arena_print(
+        " Tab: focus | Enter: activate | q/Esc: quit | Name: {s} | Items: {d}",
+        .{ name_str, total_list_items },
+    );
+
+    ui.next_width(.pct(1, 0));
+    ui.next_height(.pct(1, 0));
+    _ = ui.push_color(bg_color);
+    defer _ = ui.pop_color();
+    _ = ui.build_box(status, .{ .draw_text = true });
 }
 
 // ---------------------------------------------------------------------------
