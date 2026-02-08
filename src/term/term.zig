@@ -4,6 +4,8 @@ const Arena = base.Arena;
 const posix = std.posix;
 const c = std.c;
 
+pub const draw = @import("draw.zig");
+
 // ---------------------------------------------------------------------------
 // Terminal escape sequences
 // ---------------------------------------------------------------------------

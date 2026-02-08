@@ -234,9 +234,7 @@ fn build_ui(app: *const App) !BuildResult {
 }
 
 fn build_button(string: []const u8, theme: Theme) *Box {
-    const tag = ui.parse_tag(string);
-    const text_w: f32 = @floatFromInt(tag.display.len);
-    ui.next_width(.cells(text_w + 4, 1));
+    ui.next_width(.text(2, 1));
     ui.next_height(.cells(3, 1));
     ui.next_bg(theme.button_bg());
     ui.next_color(theme.fg());
@@ -299,10 +297,18 @@ pub fn run() !void {
     defer t.deinit();
 
     var app: App = .{};
+    var last_time = std.time.Instant.now() catch null;
 
     while (true) {
         const ev_scope = event_arena.scoped();
         defer ev_scope.release();
+
+        const now = std.time.Instant.now() catch null;
+        const dt: f32 = if (now != null and last_time != null)
+            @as(f32, @floatFromInt(now.?.since(last_time.?))) / std.time.ns_per_s
+        else
+            1.0 / 60.0;
+        last_time = now;
 
         // -- Input ----------------------------------------------------------
         interaction.begin_frame();
@@ -327,7 +333,7 @@ pub fn run() !void {
         _ = try t.check_resize();
         t.clear();
 
-        const root = ui.begin_build(t.cols, t.rows);
+        const root = ui.begin_build(t.cols, t.rows, dt);
         root.flags.draw_background = true;
         root.bg_color = app.theme.bg();
 

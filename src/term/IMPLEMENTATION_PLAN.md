@@ -774,6 +774,116 @@ bypass them and compose boxes directly.
 
 ---
 
+## Phase 7: Inline Signal Architecture
+
+**Goal**: Restructure event processing so `signal_from_box` can be called during the
+build phase, enabling the immediate-mode pattern where widget code constructs a box
+and immediately queries its interaction state in a single expression.
+
+**Files**: `src/ui/interaction.zig` (restructured), `src/ui/ui.zig` (convenience helpers,
+`begin_build` change), `src/tui_test/basic_ui.zig` (refactored),
+`src/tui_test/scroll.zig` (refactored)
+
+### 7.1 — Move Event Processing Before Build
+
+Currently the frame loop is: build → layout → `process_events` → `signal_from_box`.
+This forces application code to collect box pointers during build, then query signals
+in a separate pass afterward. The `BuildResult` pattern in both demos exists solely
+because signals can't be queried until after layout.
+
+The fix: move `process_events` to run at the start of `begin_build`, operating on the
+**previous frame's** box tree (which still exists on the other double-buffered arena).
+This sets `hot_box_key`, `active_box_key`, `focus_hot_key`, and `focus_active_key`
+before any boxes are built, so `signal_from_box` can be called inline during build.
+
+`begin_build` changes from:
+```
+1. bump build_index, swap arenas, clear, reset stacks
+2. build root box, push parent
+```
+to:
+```
+1. process_events(prev_frame_root)   ← walk previous frame's tree
+2. bump build_index, swap arenas, clear, reset stacks
+3. build root box, push parent
+```
+
+This works because:
+- `build_box` already copies the previous frame's `rect` into the new box, so
+  `signal_from_box` can check `box.rect.contains(mouse_pos)` against where the box
+  was last frame — same approach as raddebugger
+- `hot_box_key` is determined from mouse position against previous-frame rects
+- New boxes (no previous frame entry) have a zero rect on their first frame, so they
+  don't register mouse interactions until their second frame — same as raddebugger
+- Interaction state (`hot_box_key`, `active_box_key`, `focus_hot_key`) is stored as
+  `Key` values (u64 hashes), not pointers, so they remain valid after the arena swap
+
+The caller no longer calls `process_events` explicitly. The frame loop simplifies to:
+```
+interaction.begin_frame()
+poll events → push_event
+begin_build (processes events internally) → build_ui → end_build
+draw → flush
+```
+
+### 7.2 — Inline Signal Pattern
+
+With event processing moved before build, the application pattern becomes:
+
+```zig
+const root = ui.begin_build(t.cols, t.rows, dt);
+
+// Build + interact inline — no separate signal pass needed
+const btn = ui.build_box("Click Me##btn", button_flags);
+if (ui.clicked(interaction.signal_from_box(btn))) {
+    handle_click();
+}
+
+ui.end_build();
+```
+
+Build order determines event consumption priority: the first box built gets first
+chance to consume mouse/keyboard events via `signal_from_box`. This matches
+raddebugger's semantics. For overlapping boxes, `hot_box_key` ensures only the
+topmost (deepest in tree) box handles presses, regardless of `signal_from_box` call
+order.
+
+This is a prerequisite for Phase 6 widgets, where `button("OK")` returns a `Signal`
+directly:
+```zig
+if (ui.clicked(widgets.button("OK"))) { ... }
+```
+
+### 7.3 — Convenience Signal Helpers
+
+Add methods on `Signal` that combine common flag checks, matching raddebugger's
+`ui_clicked(sig)` / `ui_pressed(sig)` macros:
+
+```zig
+pub fn clicked(self: Signal) bool   // left_clicked or keyboard_pressed
+pub fn pressed(self: Signal) bool   // left_pressed or keyboard_pressed
+pub fn released(self: Signal) bool  // left_released
+pub fn hovering(self: Signal) bool  // hovering
+pub fn dragging(self: Signal) bool  // dragging
+```
+
+### 7.4 — Demo Refactoring
+
+Remove the `BuildResult` pattern from `basic_ui.zig` and `scroll.zig`. Signal handling
+moves inline with box construction — no need to collect box pointers and process them
+in a separate `handle_all_signals` function. `process_events(root)` calls disappear
+from demo frame loops since `begin_build` handles it internally.
+
+### 7.5 — Validation
+
+- Test that `signal_from_box` called during build phase (before layout) produces
+  correct signals using previous-frame rects
+- Verify event consumption order matches build order
+- Test that new boxes (first frame of existence) don't produce spurious mouse signals
+- Refactored demos work identically to before
+
+---
+
 ## Dependency Graph
 
 ```
@@ -787,12 +897,16 @@ Phase 4: TUI Draw Layer ✅ ───┤ (depends on 1, 2, 3 for focus)
                               │
 Phase 5: Frame Loop ──────────┤ (depends on all above)
                               │
-Phase 6: Widget Submodule ────┘ (depends on 5)
+Phase 7: Inline Signals ──────┤ (depends on 5)
+                              │
+Phase 6: Widget Submodule ────┘ (depends on 7)
 ```
 
 Phases 3 and 4 were developed roughly in parallel. Phase 4 ended up depending on
 Phase 3's `focus_hot_t` for focused-border styling. Phase 5 integrates everything.
-Phase 6 builds convenience widgets on top of the working frame loop.
+Phase 7 restructures the event processing order so signals can be queried inline
+during the build phase. Phase 6 builds convenience widgets that depend on this
+inline pattern (e.g. `button("OK")` returning a `Signal`).
 
 ---
 

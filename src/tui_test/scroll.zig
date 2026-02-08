@@ -272,10 +272,18 @@ pub fn run() !void {
     defer t.deinit();
 
     var app: App = .{};
+    var last_time = std.time.Instant.now() catch null;
 
     while (true) {
         const ev_scope = event_arena.scoped();
         defer ev_scope.release();
+
+        const now = std.time.Instant.now() catch null;
+        const dt: f32 = if (now != null and last_time != null)
+            @as(f32, @floatFromInt(now.?.since(last_time.?))) / std.time.ns_per_s
+        else
+            1.0 / 60.0;
+        last_time = now;
 
         // -- Input ----------------------------------------------------------
         interaction.begin_frame();
@@ -300,7 +308,7 @@ pub fn run() !void {
         _ = try t.check_resize();
         t.clear();
 
-        const root = ui.begin_build(t.cols, t.rows);
+        const root = ui.begin_build(t.cols, t.rows, dt);
         root.flags.draw_background = true;
         root.bg_color = bg_color;
 

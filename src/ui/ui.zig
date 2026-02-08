@@ -8,6 +8,7 @@ const assert = std.debug.assert;
 pub const layout_mod = @import("layout.zig");
 pub const interaction = @import("interaction.zig");
 pub const render = @import("render.zig");
+pub const widgets = @import("widgets.zig");
 
 // ---------------------------------------------------------------------------
 // Key
@@ -70,12 +71,12 @@ pub fn parse_tag(string: []const u8) Tag {
     };
 }
 
-const Separator = struct {
+pub const Separator = struct {
     pos: usize,
     is_triple: bool,
 };
 
-fn find_separator(string: []const u8) ?Separator {
+pub fn find_separator(string: []const u8) ?Separator {
     if (string.len < 2) return null;
     var i: usize = 0;
     while (i + 1 < string.len) : (i += 1) {
@@ -514,6 +515,8 @@ const State = struct {
     root: ?*Box = null,
     screen_size: [2]u16 = .{ 0, 0 },
     active: bool = false,
+    dt: f32 = 1.0 / 60.0,
+    animating: bool = false,
 };
 
 var g: State = .{};
@@ -552,12 +555,14 @@ pub fn get_build_arena() *Arena {
 
 /// Begin a new frame. Swaps the arena, resets stacks, bumps the build index,
 /// and creates a root box sized to the screen.
-pub fn begin_build(screen_w: u16, screen_h: u16) *Box {
+pub fn begin_build(screen_w: u16, screen_h: u16, dt: f32) *Box {
     g.build_index += 1;
     g.arena_index ^= 1;
     g.arenas[g.arena_index].clear();
     g.stacks = init_stacks();
     g.screen_size = .{ screen_w, screen_h };
+    g.dt = dt;
+    g.animating = false;
     g.active = true;
 
     const root_box = build_box("root###", .{});
@@ -580,6 +585,18 @@ pub fn end_build() void {
 /// Return the root box of the current frame (set by `begin_build`).
 pub fn get_root() ?*Box {
     return g.root;
+}
+
+pub fn get_dt() f32 {
+    return g.dt;
+}
+
+pub fn set_animating() void {
+    g.animating = true;
+}
+
+pub fn is_animating() bool {
+    return g.animating;
 }
 
 fn box_table_slot(key: Key) usize {
@@ -981,7 +998,7 @@ test "cross-frame persistence via begin_build/end_build" {
     defer deinit();
 
     // Frame 1: build a box with a known key
-    _ = begin_build(80, 24);
+    _ = begin_build(80, 24, 1.0 / 60.0);
     const b1 = build_box("persist_me##stable_key", .{ .draw_text = true });
     b1.hot_t = 0.75;
     b1.view_off = .{ 10, 20 };
@@ -989,7 +1006,7 @@ test "cross-frame persistence via begin_build/end_build" {
     end_build();
 
     // Frame 2: build the same key — persistent fields should carry over
-    _ = begin_build(80, 24);
+    _ = begin_build(80, 24, 1.0 / 60.0);
     const b2 = build_box("persist_me##stable_key", .{ .draw_text = true });
     try std.testing.expect(b2.key.eql(key1));
     try std.testing.expectEqual(@as(f32, 0.75), b2.hot_t);
@@ -1003,13 +1020,13 @@ test "stale boxes are pruned from hash table" {
     defer deinit();
 
     // Frame 1: build a box
-    _ = begin_build(80, 24);
+    _ = begin_build(80, 24, 1.0 / 60.0);
     const b1 = build_box("ephemeral##gone", .{});
     const key = b1.key;
     end_build();
 
     // Frame 2: do NOT build that box
-    _ = begin_build(80, 24);
+    _ = begin_build(80, 24, 1.0 / 60.0);
     end_build();
 
     // The old box should have been pruned
@@ -1020,7 +1037,7 @@ test "begin_build creates root and end_build runs layout" {
     try init_all();
     defer deinit();
 
-    _ = begin_build(80, 24);
+    _ = begin_build(80, 24, 1.0 / 60.0);
 
     next_width(Size.cells(40, 1));
     next_height(Size.cells(5, 1));

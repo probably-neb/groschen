@@ -392,14 +392,20 @@ pub fn signal_from_box(box: *ui.Box) ui.Signal {
 
     // -- Animate hot_t / active_t / focus_*_t -------------------------------
     const anim_rate: f32 = 15.0;
-    const dt: f32 = 1.0 / 60.0;
-    const step = anim_rate * dt;
+    const step = anim_rate * ui.get_dt();
 
     box.hot_t = animate(box.hot_t, sig.flags.hovering, step);
     box.active_t = animate(box.active_t, is_active_left or is_active_right, step);
     box.focus_hot_t = animate(box.focus_hot_t, state.focus_hot_key.eql(box.key), step);
     box.focus_active_t = animate(box.focus_active_t, state.focus_active_key.eql(box.key), step);
     box.disabled_t = animate(box.disabled_t, box.flags.disabled, step);
+
+    const is_transitioning = (box.hot_t > 0.0 and box.hot_t < 1.0) or
+        (box.active_t > 0.0 and box.active_t < 1.0) or
+        (box.focus_hot_t > 0.0 and box.focus_hot_t < 1.0) or
+        (box.focus_active_t > 0.0 and box.focus_active_t < 1.0) or
+        (box.disabled_t > 0.0 and box.disabled_t < 1.0);
+    if (is_transitioning) ui.set_animating();
 
     return sig;
 }
