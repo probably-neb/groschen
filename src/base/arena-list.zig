@@ -34,9 +34,9 @@ pub fn ArenaListAligned(comptime T: type, comptime alignment: ?std.mem.Alignment
         }
 
         pub fn init_capacity(arena: *Arena, num: usize) Arena.AllocError!Self {
-            var self: Self = .{};
-            try self.ensure_total_capacity_precise(arena, num);
-            return self;
+            var result: Self = .{};
+            try result.ensure_total_capacity_precise(arena, num);
+            return result;
         }
 
         pub fn init_buffer(buffer: Slice) Self {
@@ -63,74 +63,74 @@ pub fn ArenaListAligned(comptime T: type, comptime alignment: ?std.mem.Alignment
             };
         }
 
-        pub fn clone(self: Self, arena: *Arena) Arena.AllocError!Self {
-            var cloned = try Self.init_capacity(arena, self.capacity);
-            cloned.append_slice_assume_capacity(self.items);
+        pub fn clone(list: Self, arena: *Arena) Arena.AllocError!Self {
+            var cloned = try Self.init_capacity(arena, list.capacity);
+            cloned.append_slice_assume_capacity(list.items);
             return cloned;
         }
 
-        pub fn insert(self: *Self, arena: *Arena, i: usize, item: T) Arena.AllocError!void {
-            const dst = try self.add_many_at(arena, i, 1);
+        pub fn insert(list: *Self, arena: *Arena, i: usize, item: T) Arena.AllocError!void {
+            const dst = try list.add_many_at(arena, i, 1);
             dst[0] = item;
         }
 
-        pub fn insert_assume_capacity(self: *Self, i: usize, item: T) void {
-            assert(self.items.len < self.capacity);
-            self.items.len += 1;
-            @memmove(self.items[i + 1 .. self.items.len], self.items[i .. self.items.len - 1]);
-            self.items[i] = item;
+        pub fn insert_assume_capacity(list: *Self, i: usize, item: T) void {
+            assert(list.items.len < list.capacity);
+            list.items.len += 1;
+            @memmove(list.items[i + 1 .. list.items.len], list.items[i .. list.items.len - 1]);
+            list.items[i] = item;
         }
 
-        pub fn add_many_at(self: *Self, arena: *Arena, index: usize, count: usize) Arena.AllocError![]T {
-            const new_len = try add_or_oom(self.items.len, count);
+        pub fn add_many_at(list: *Self, arena: *Arena, index: usize, count: usize) Arena.AllocError![]T {
+            const new_len = try add_or_oom(list.items.len, count);
 
-            if (self.capacity >= new_len) {
-                return self.add_many_at_assume_capacity(index, count);
+            if (list.capacity >= new_len) {
+                return list.add_many_at_assume_capacity(index, count);
             }
 
-            self.assert_arena_contiguity(arena);
+            list.assert_arena_contiguity(arena);
 
             const new_capacity = new_len;
-            const additional = new_capacity - self.capacity;
+            const additional = new_capacity - list.capacity;
             _ = try arena.push_aligned(additional * @sizeOf(T), @alignOf(T));
-            self.saved_arena_pos = arena.pos;
-            self.capacity = new_capacity;
+            list.saved_arena_pos = arena.pos;
+            list.capacity = new_capacity;
 
-            return self.add_many_at_assume_capacity(index, count);
+            return list.add_many_at_assume_capacity(index, count);
         }
 
-        pub fn add_many_at_assume_capacity(self: *Self, index: usize, count: usize) []T {
-            const new_len = self.items.len + count;
-            assert(self.capacity >= new_len);
-            const to_move = self.items[index..];
-            self.items.len = new_len;
-            @memmove(self.items[index + count ..][0..to_move.len], to_move);
-            const result = self.items[index..][0..count];
-            @memset(result, @as(T, undefined));
-            return result;
+        pub fn add_many_at_assume_capacity(list: *Self, index: usize, count: usize) []T {
+            const new_len = list.items.len + count;
+            assert(list.capacity >= new_len);
+            const to_move = list.items[index..];
+            list.items.len = new_len;
+            @memmove(list.items[index + count ..][0..to_move.len], to_move);
+            const dst = list.items[index..][0..count];
+            @memset(dst, @as(T, undefined));
+            return dst;
         }
 
-        pub fn insert_slice(self: *Self, arena: *Arena, index: usize, items: []const T) Arena.AllocError!void {
-            const dst = try self.add_many_at(arena, index, items.len);
+        pub fn insert_slice(list: *Self, arena: *Arena, index: usize, items: []const T) Arena.AllocError!void {
+            const dst = try list.add_many_at(arena, index, items.len);
             @memcpy(dst, items);
         }
 
-        pub fn replace_range(self: *Self, arena: *Arena, start: usize, len: usize, new_items: []const T) Arena.AllocError!void {
+        pub fn replace_range(list: *Self, arena: *Arena, start: usize, len: usize, new_items: []const T) Arena.AllocError!void {
             const after_range = start + len;
-            const range = self.items[start..after_range];
+            const range = list.items[start..after_range];
             if (range.len < new_items.len) {
                 const first = new_items[0..range.len];
                 const rest = new_items[range.len..];
                 @memcpy(range[0..first.len], first);
-                try self.insert_slice(arena, after_range, rest);
+                try list.insert_slice(arena, after_range, rest);
             } else {
-                self.replace_range_assume_capacity(start, len, new_items);
+                list.replace_range_assume_capacity(start, len, new_items);
             }
         }
 
-        pub fn replace_range_assume_capacity(self: *Self, start: usize, len: usize, new_items: []const T) void {
+        pub fn replace_range_assume_capacity(list: *Self, start: usize, len: usize, new_items: []const T) void {
             const after_range = start + len;
-            const range = self.items[start..after_range];
+            const range = list.items[start..after_range];
 
             if (range.len == new_items.len) {
                 @memcpy(range[0..new_items.len], new_items);
@@ -138,205 +138,205 @@ pub fn ArenaListAligned(comptime T: type, comptime alignment: ?std.mem.Alignment
                 const first = new_items[0..range.len];
                 const rest = new_items[range.len..];
                 @memcpy(range[0..first.len], first);
-                const dst = self.add_many_at_assume_capacity(after_range, rest.len);
+                const dst = list.add_many_at_assume_capacity(after_range, rest.len);
                 @memcpy(dst, rest);
             } else {
                 const extra = range.len - new_items.len;
                 @memcpy(range[0..new_items.len], new_items);
-                const src = self.items[after_range..];
-                @memmove(self.items[after_range - extra ..][0..src.len], src);
-                @memset(self.items[self.items.len - extra ..], @as(T, undefined));
-                self.items.len -= extra;
+                const src = list.items[after_range..];
+                @memmove(list.items[after_range - extra ..][0..src.len], src);
+                @memset(list.items[list.items.len - extra ..], @as(T, undefined));
+                list.items.len -= extra;
             }
         }
 
-        pub fn append(self: *Self, arena: *Arena, item: T) Arena.AllocError!void {
-            const new_item_ptr = try self.add_one(arena);
+        pub fn append(list: *Self, arena: *Arena, item: T) Arena.AllocError!void {
+            const new_item_ptr = try list.add_one(arena);
             new_item_ptr.* = item;
         }
 
-        pub fn append_assume_capacity(self: *Self, item: T) void {
-            self.add_one_assume_capacity().* = item;
+        pub fn append_assume_capacity(list: *Self, item: T) void {
+            list.add_one_assume_capacity().* = item;
         }
 
-        pub fn ordered_remove(self: *Self, i: usize) T {
-            const old_item = self.items[i];
-            self.replace_range_assume_capacity(i, 1, &.{});
+        pub fn ordered_remove(list: *Self, i: usize) T {
+            const old_item = list.items[i];
+            list.replace_range_assume_capacity(i, 1, &.{});
             return old_item;
         }
 
-        pub fn ordered_remove_many(self: *Self, sorted_indexes: []const usize) void {
+        pub fn ordered_remove_many(list: *Self, sorted_indexes: []const usize) void {
             if (sorted_indexes.len == 0) return;
             var shift: usize = 1;
             for (sorted_indexes[0 .. sorted_indexes.len - 1], sorted_indexes[1..]) |removed, end| {
                 if (removed == end) continue;
                 const start = removed + 1;
                 const len = end - start;
-                @memmove(self.items[start - shift ..][0..len], self.items[start..][0..len]);
+                @memmove(list.items[start - shift ..][0..len], list.items[start..][0..len]);
                 shift += 1;
             }
             const start = sorted_indexes[sorted_indexes.len - 1] + 1;
-            const end = self.items.len;
+            const end = list.items.len;
             const len = end - start;
-            @memmove(self.items[start - shift ..][0..len], self.items[start..][0..len]);
-            self.items.len = end - shift;
+            @memmove(list.items[start - shift ..][0..len], list.items[start..][0..len]);
+            list.items.len = end - shift;
         }
 
-        pub fn swap_remove(self: *Self, i: usize) T {
-            if (self.items.len - 1 == i) return self.pop().?;
-            const old_item = self.items[i];
-            self.items[i] = self.pop().?;
+        pub fn swap_remove(list: *Self, i: usize) T {
+            if (list.items.len - 1 == i) return list.pop().?;
+            const old_item = list.items[i];
+            list.items[i] = list.pop().?;
             return old_item;
         }
 
-        pub fn append_slice(self: *Self, arena: *Arena, items: []const T) Arena.AllocError!void {
-            try self.ensure_unused_capacity(arena, items.len);
-            self.append_slice_assume_capacity(items);
+        pub fn append_slice(list: *Self, arena: *Arena, items: []const T) Arena.AllocError!void {
+            try list.ensure_unused_capacity(arena, items.len);
+            list.append_slice_assume_capacity(items);
         }
 
-        pub fn append_slice_assume_capacity(self: *Self, items: []const T) void {
-            const old_len = self.items.len;
+        pub fn append_slice_assume_capacity(list: *Self, items: []const T) void {
+            const old_len = list.items.len;
             const new_len = old_len + items.len;
-            assert(new_len <= self.capacity);
-            self.items.len = new_len;
-            @memcpy(self.items[old_len..][0..items.len], items);
+            assert(new_len <= list.capacity);
+            list.items.len = new_len;
+            @memcpy(list.items[old_len..][0..items.len], items);
         }
 
-        pub fn append_unaligned_slice(self: *Self, arena: *Arena, items: []align(1) const T) Arena.AllocError!void {
-            try self.ensure_unused_capacity(arena, items.len);
-            self.append_unaligned_slice_assume_capacity(items);
+        pub fn append_unaligned_slice(list: *Self, arena: *Arena, items: []align(1) const T) Arena.AllocError!void {
+            try list.ensure_unused_capacity(arena, items.len);
+            list.append_unaligned_slice_assume_capacity(items);
         }
 
-        pub fn append_unaligned_slice_assume_capacity(self: *Self, items: []align(1) const T) void {
-            const old_len = self.items.len;
+        pub fn append_unaligned_slice_assume_capacity(list: *Self, items: []align(1) const T) void {
+            const old_len = list.items.len;
             const new_len = old_len + items.len;
-            assert(new_len <= self.capacity);
-            self.items.len = new_len;
-            @memcpy(self.items[old_len..][0..items.len], items);
+            assert(new_len <= list.capacity);
+            list.items.len = new_len;
+            @memcpy(list.items[old_len..][0..items.len], items);
         }
 
-        pub fn append_n_times(self: *Self, arena: *Arena, value: T, n: usize) Arena.AllocError!void {
-            const old_len = self.items.len;
-            try self.resize(arena, try add_or_oom(old_len, n));
-            @memset(self.items[old_len..self.items.len], value);
+        pub fn append_n_times(list: *Self, arena: *Arena, value: T, n: usize) Arena.AllocError!void {
+            const old_len = list.items.len;
+            try list.resize(arena, try add_or_oom(old_len, n));
+            @memset(list.items[old_len..list.items.len], value);
         }
 
-        pub fn append_n_times_assume_capacity(self: *Self, value: T, n: usize) void {
-            const new_len = self.items.len + n;
-            assert(new_len <= self.capacity);
-            @memset(self.items.ptr[self.items.len..new_len], value);
-            self.items.len = new_len;
+        pub fn append_n_times_assume_capacity(list: *Self, value: T, n: usize) void {
+            const new_len = list.items.len + n;
+            assert(new_len <= list.capacity);
+            @memset(list.items.ptr[list.items.len..new_len], value);
+            list.items.len = new_len;
         }
 
-        pub fn resize(self: *Self, arena: *Arena, new_len: usize) Arena.AllocError!void {
-            try self.ensure_total_capacity(arena, new_len);
-            self.items.len = new_len;
+        pub fn resize(list: *Self, arena: *Arena, new_len: usize) Arena.AllocError!void {
+            try list.ensure_total_capacity(arena, new_len);
+            list.items.len = new_len;
         }
 
-        pub fn shrink_retaining_capacity(self: *Self, new_len: usize) void {
-            assert(new_len <= self.items.len);
-            self.items.len = new_len;
+        pub fn shrink_retaining_capacity(list: *Self, new_len: usize) void {
+            assert(new_len <= list.items.len);
+            list.items.len = new_len;
         }
 
-        pub fn clear_retaining_capacity(self: *Self) void {
-            self.items.len = 0;
+        pub fn clear_retaining_capacity(list: *Self) void {
+            list.items.len = 0;
         }
 
-        pub fn ensure_total_capacity(self: *Self, arena: *Arena, new_capacity: usize) Arena.AllocError!void {
-            if (self.capacity >= new_capacity) return;
-            try self.ensure_total_capacity_precise(arena, new_capacity);
+        pub fn ensure_total_capacity(list: *Self, arena: *Arena, new_capacity: usize) Arena.AllocError!void {
+            if (list.capacity >= new_capacity) return;
+            try list.ensure_total_capacity_precise(arena, new_capacity);
         }
 
-        pub fn ensure_total_capacity_precise(self: *Self, arena: *Arena, new_capacity: usize) Arena.AllocError!void {
-            if (self.capacity >= new_capacity) return;
+        pub fn ensure_total_capacity_precise(list: *Self, arena: *Arena, new_capacity: usize) Arena.AllocError!void {
+            if (list.capacity >= new_capacity) return;
 
-            self.assert_arena_contiguity(arena);
+            list.assert_arena_contiguity(arena);
 
-            if (self.capacity == 0) {
+            if (list.capacity == 0) {
                 const new_memory = try arena.alloc(T, new_capacity);
-                self.items.ptr = new_memory.ptr;
-                self.capacity = new_capacity;
+                list.items.ptr = new_memory.ptr;
+                list.capacity = new_capacity;
             } else {
-                const additional = new_capacity - self.capacity;
+                const additional = new_capacity - list.capacity;
                 _ = try arena.push_aligned(additional * @sizeOf(T), @alignOf(T));
-                self.capacity = new_capacity;
+                list.capacity = new_capacity;
             }
-            self.saved_arena_pos = arena.pos;
+            list.saved_arena_pos = arena.pos;
         }
 
-        pub fn ensure_unused_capacity(self: *Self, arena: *Arena, additional: usize) Arena.AllocError!void {
-            return self.ensure_total_capacity(arena, try add_or_oom(self.items.len, additional));
+        pub fn ensure_unused_capacity(list: *Self, arena: *Arena, additional: usize) Arena.AllocError!void {
+            return list.ensure_total_capacity(arena, try add_or_oom(list.items.len, additional));
         }
 
-        pub fn expand_to_capacity(self: *Self) void {
-            self.items.len = self.capacity;
+        pub fn expand_to_capacity(list: *Self) void {
+            list.items.len = list.capacity;
         }
 
-        pub fn add_one(self: *Self, arena: *Arena) Arena.AllocError!*T {
-            const newlen = self.items.len + 1;
-            try self.ensure_total_capacity(arena, newlen);
-            return self.add_one_assume_capacity();
+        pub fn add_one(list: *Self, arena: *Arena) Arena.AllocError!*T {
+            const newlen = list.items.len + 1;
+            try list.ensure_total_capacity(arena, newlen);
+            return list.add_one_assume_capacity();
         }
 
-        pub fn add_one_assume_capacity(self: *Self) *T {
-            assert(self.items.len < self.capacity);
-            self.items.len += 1;
-            return &self.items[self.items.len - 1];
+        pub fn add_one_assume_capacity(list: *Self) *T {
+            assert(list.items.len < list.capacity);
+            list.items.len += 1;
+            return &list.items[list.items.len - 1];
         }
 
-        pub fn add_many_as_array(self: *Self, arena: *Arena, comptime n: usize) Arena.AllocError!*[n]T {
-            const prev_len = self.items.len;
-            try self.resize(arena, try add_or_oom(self.items.len, n));
-            return self.items[prev_len..][0..n];
+        pub fn add_many_as_array(list: *Self, arena: *Arena, comptime n: usize) Arena.AllocError!*[n]T {
+            const prev_len = list.items.len;
+            try list.resize(arena, try add_or_oom(list.items.len, n));
+            return list.items[prev_len..][0..n];
         }
 
-        pub fn add_many_as_array_assume_capacity(self: *Self, comptime n: usize) *[n]T {
-            assert(self.items.len + n <= self.capacity);
-            const prev_len = self.items.len;
-            self.items.len += n;
-            return self.items[prev_len..][0..n];
+        pub fn add_many_as_array_assume_capacity(list: *Self, comptime n: usize) *[n]T {
+            assert(list.items.len + n <= list.capacity);
+            const prev_len = list.items.len;
+            list.items.len += n;
+            return list.items[prev_len..][0..n];
         }
 
-        pub fn add_many_as_slice(self: *Self, arena: *Arena, n: usize) Arena.AllocError![]T {
-            const prev_len = self.items.len;
-            try self.resize(arena, try add_or_oom(self.items.len, n));
-            return self.items[prev_len..][0..n];
+        pub fn add_many_as_slice(list: *Self, arena: *Arena, n: usize) Arena.AllocError![]T {
+            const prev_len = list.items.len;
+            try list.resize(arena, try add_or_oom(list.items.len, n));
+            return list.items[prev_len..][0..n];
         }
 
-        pub fn add_many_as_slice_assume_capacity(self: *Self, n: usize) []T {
-            assert(self.items.len + n <= self.capacity);
-            const prev_len = self.items.len;
-            self.items.len += n;
-            return self.items[prev_len..][0..n];
+        pub fn add_many_as_slice_assume_capacity(list: *Self, n: usize) []T {
+            assert(list.items.len + n <= list.capacity);
+            const prev_len = list.items.len;
+            list.items.len += n;
+            return list.items[prev_len..][0..n];
         }
 
-        pub fn pop(self: *Self) ?T {
-            if (self.items.len == 0) return null;
-            const val = self.items[self.items.len - 1];
-            self.items.len -= 1;
+        pub fn pop(list: *Self) ?T {
+            if (list.items.len == 0) return null;
+            const val = list.items[list.items.len - 1];
+            list.items.len -= 1;
             return val;
         }
 
-        pub fn allocated_slice(self: Self) Slice {
-            return self.items.ptr[0..self.capacity];
+        pub fn allocated_slice(list: Self) Slice {
+            return list.items.ptr[0..list.capacity];
         }
 
-        pub fn unused_capacity_slice(self: Self) []T {
-            return self.allocated_slice()[self.items.len..];
+        pub fn unused_capacity_slice(list: Self) []T {
+            return list.allocated_slice()[list.items.len..];
         }
 
-        pub fn get_last(self: Self) T {
-            return self.items[self.items.len - 1];
+        pub fn get_last(list: Self) T {
+            return list.items[list.items.len - 1];
         }
 
-        pub fn get_last_or_null(self: Self) ?T {
-            if (self.items.len == 0) return null;
-            return self.get_last();
+        pub fn get_last_or_null(list: Self) ?T {
+            if (list.items.len == 0) return null;
+            return list.get_last();
         }
 
-        fn assert_arena_contiguity(self: *Self, arena: *Arena) void {
-            if (self.capacity == 0) return;
-            assert(arena.pos == self.saved_arena_pos);
+        fn assert_arena_contiguity(list: *Self, arena: *Arena) void {
+            if (list.capacity == 0) return;
+            assert(arena.pos == list.saved_arena_pos);
         }
     };
 }

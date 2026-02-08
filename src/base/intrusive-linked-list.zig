@@ -33,12 +33,12 @@ pub fn IntrusiveLinkedList(comptime T: type) type {
         }
 
         pub fn count(list: Self) usize {
-            var c: usize = 0;
-            var it: ?*const T = list.first;
-            while (it) |n| : (it = n.next) {
-                c += 1;
+            var total: usize = 0;
+            var current: ?*const T = list.first;
+            while (current) |node| : (current = node.next) {
+                total += 1;
             }
-            return c;
+            return total;
         }
 
         pub fn reverse(indirect: *?*T) void {
@@ -62,11 +62,11 @@ pub fn IntrusiveLinkedList(comptime T: type) type {
             if (list.first == node) {
                 list.first = node.next;
             } else {
-                var current_elm = list.first.?;
-                while (current_elm.next != node) {
-                    current_elm = current_elm.next.?;
+                var current = list.first.?;
+                while (current.next != node) {
+                    current = current.next.?;
                 }
-                current_elm.next = node.next;
+                current.next = node.next;
             }
         }
 
@@ -194,28 +194,28 @@ pub fn IntrusiveDoublyLinkedList(comptime T: type) type {
 
         pub fn count(list: Self) usize {
             const first = list.first orelse return 0;
-            var c: usize = 1;
-            var it = first.next;
-            while (it != first) : (it = it.next) {
-                c += 1;
+            var total: usize = 1;
+            var current = first.next;
+            while (current != first) : (current = current.next) {
+                total += 1;
             }
-            return c;
+            return total;
         }
 
         pub const Iter = struct {
             list: *const Self,
             node: ?*T,
 
-            pub fn next(self: *Iter) ?*T {
-                const node = self.node;
-                if (node) |n| {
-                    self.node =
-                        if (n.next != self.list.first)
-                            n.next
+            pub fn next(iterator: *Iter) ?*T {
+                const current = iterator.node;
+                if (current) |node| {
+                    iterator.node =
+                        if (node.next != iterator.list.first)
+                            node.next
                         else
                             null;
                 }
-                return node;
+                return current;
             }
         };
 

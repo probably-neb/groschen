@@ -36,19 +36,19 @@ pub const UiEventList = struct {
     last: ?*UiEvent = null,
     count: u32 = 0,
 
-    fn append(self: *UiEventList, ev: *UiEvent) void {
+    fn append(list: *UiEventList, ev: *UiEvent) void {
         ev.next = null;
-        if (self.last) |last| {
+        if (list.last) |last| {
             last.next = ev;
         } else {
-            self.first = ev;
+            list.first = ev;
         }
-        self.last = ev;
-        self.count += 1;
+        list.last = ev;
+        list.count += 1;
     }
 
-    fn clear(self: *UiEventList) void {
-        self.* = .{};
+    fn clear(list: *UiEventList) void {
+        list.* = .{};
     }
 };
 
@@ -173,34 +173,34 @@ pub fn process_events(root: *ui.Box) void {
 
 fn update_hot_box(root: *ui.Box) void {
     var hot_pos = state.mouse_pos;
-    var ev = state.events.first;
-    while (ev) |e| : (ev = e.next) {
-        if (e.kind == .mouse_press) {
-            hot_pos = e.pos;
+    var event_node = state.events.first;
+    while (event_node) |event| : (event_node = event.next) {
+        if (event.kind == .mouse_press) {
+            hot_pos = event.pos;
             break;
         }
     }
 
     var result: ui.Key = ui.Key.zero;
-    var node: ?*ui.Box = root;
-    while (node) |n| {
-        if (n.flags.clickable and !n.flags.disabled and
-            n.rect.contains(hot_pos[0], hot_pos[1]))
+    var current: ?*ui.Box = root;
+    while (current) |box| {
+        if (box.flags.clickable and !box.flags.disabled and
+            box.rect.contains(hot_pos[0], hot_pos[1]))
         {
-            result = n.key;
+            result = box.key;
         }
-        node = ui.tree_next(n);
+        current = ui.tree_next(box);
     }
     state.hot_box_key = result;
 }
 
 fn process_mouse_focus(root: *ui.Box) void {
-    var ev = state.events.first;
-    while (ev) |e| : (ev = e.next) {
-        if (e.consumed) continue;
-        if (e.kind != .mouse_press) continue;
+    var event_node = state.events.first;
+    while (event_node) |event| : (event_node = event.next) {
+        if (event.consumed) continue;
+        if (event.kind != .mouse_press) continue;
 
-        const clicked_key = find_topmost_focusable_at(root, e.pos[0], e.pos[1]);
+        const clicked_key = find_topmost_focusable_at(root, event.pos[0], event.pos[1]);
         if (!clicked_key.is_zero()) {
             state.focus_hot_key = clicked_key;
         }
@@ -209,15 +209,15 @@ fn process_mouse_focus(root: *ui.Box) void {
 
 fn find_topmost_focusable_at(root: *ui.Box, col: u16, row: u16) ui.Key {
     var result: ui.Key = ui.Key.zero;
-    var node: ?*ui.Box = root;
-    while (node) |n| {
-        if ((n.flags.focus_hot or n.flags.focus_active) and
-            !n.flags.focus_nav_skip and !n.flags.disabled and
-            !n.key.is_zero() and n.rect.contains(col, row))
+    var current: ?*ui.Box = root;
+    while (current) |box| {
+        if ((box.flags.focus_hot or box.flags.focus_active) and
+            !box.flags.focus_nav_skip and !box.flags.disabled and
+            !box.key.is_zero() and box.rect.contains(col, row))
         {
-            result = n.key;
+            result = box.key;
         }
-        node = ui.tree_next(n);
+        current = ui.tree_next(box);
     }
     return result;
 }
@@ -232,18 +232,18 @@ fn process_focus_navigation(root: *ui.Box) void {
     var focusable_keys: [max_focusable]ui.Key = undefined;
     var focusable_count: u32 = 0;
 
-    var node: ?*ui.Box = root;
-    while (node) |n| {
-        if ((n.flags.focus_hot or n.flags.focus_active) and
-            !n.flags.focus_nav_skip and !n.flags.disabled and
-            !n.key.is_zero())
+    var current: ?*ui.Box = root;
+    while (current) |box| {
+        if ((box.flags.focus_hot or box.flags.focus_active) and
+            !box.flags.focus_nav_skip and !box.flags.disabled and
+            !box.key.is_zero())
         {
             if (focusable_count < max_focusable) {
-                focusable_keys[focusable_count] = n.key;
+                focusable_keys[focusable_count] = box.key;
                 focusable_count += 1;
             }
         }
-        node = ui.tree_next(n);
+        current = ui.tree_next(box);
     }
 
     if (focusable_count == 0) {
@@ -260,12 +260,12 @@ fn process_focus_navigation(root: *ui.Box) void {
         }
     }
 
-    var ev = state.events.first;
-    while (ev) |e| : (ev = e.next) {
-        if (e.consumed) continue;
-        if (e.kind != .key_press or e.key != .tab) continue;
+    var event_node = state.events.first;
+    while (event_node) |event| : (event_node = event.next) {
+        if (event.consumed) continue;
+        if (event.kind != .key_press or event.key != .tab) continue;
 
-        if (e.mods.shift) {
+        if (event.mods.shift) {
             current_idx = if (current_idx) |idx|
                 if (idx == 0) focusable_count - 1 else idx - 1
             else
@@ -276,7 +276,7 @@ fn process_focus_navigation(root: *ui.Box) void {
             else
                 0;
         }
-        e.consumed = true;
+        event.consumed = true;
     }
 
     if (current_idx) |idx| {
@@ -287,13 +287,13 @@ fn process_focus_navigation(root: *ui.Box) void {
 
     // focus_active follows focus_hot if the focused box has the focus_active flag
     state.focus_active_key = ui.Key.zero;
-    node = root;
-    while (node) |n| {
-        if (!n.key.is_zero() and n.key.eql(state.focus_hot_key) and n.flags.focus_active) {
-            state.focus_active_key = n.key;
+    current = root;
+    while (current) |box| {
+        if (!box.key.is_zero() and box.key.eql(state.focus_hot_key) and box.flags.focus_active) {
+            state.focus_active_key = box.key;
             break;
         }
-        node = ui.tree_next(n);
+        current = ui.tree_next(box);
     }
 }
 
@@ -315,56 +315,56 @@ pub fn signal_from_box(box: *ui.Box) ui.Signal {
         sig.flags.hovering = true;
 
     // -- Mouse events -------------------------------------------------------
-    var ev = state.events.first;
-    while (ev) |e| : (ev = e.next) {
-        if (e.consumed) continue;
+    var event_node = state.events.first;
+    while (event_node) |event| : (event_node = event.next) {
+        if (event.consumed) continue;
 
-        switch (e.kind) {
+        switch (event.kind) {
             .mouse_press => {
                 if (!box.flags.clickable) continue;
-                const ev_in_bounds = box.rect.contains(e.pos[0], e.pos[1]);
-                if (!ev_in_bounds) continue;
+                const event_in_bounds = box.rect.contains(event.pos[0], event.pos[1]);
+                if (!event_in_bounds) continue;
                 if (!box.key.eql(state.hot_box_key)) continue;
 
-                if (e.mouse_button == .left) {
+                if (event.mouse_button == .left) {
                     sig.flags.left_pressed = true;
                     state.active_box_key[0] = box.key;
-                } else if (e.mouse_button == .right) {
+                } else if (event.mouse_button == .right) {
                     sig.flags.right_pressed = true;
                     state.active_box_key[1] = box.key;
                 }
-                e.consumed = true;
+                event.consumed = true;
             },
             .mouse_release => {
-                const is_left = e.mouse_button == .left and
+                const is_left = event.mouse_button == .left and
                     !state.active_box_key[0].is_zero() and
                     state.active_box_key[0].eql(box.key);
-                const is_right = e.mouse_button == .right and
+                const is_right = event.mouse_button == .right and
                     !state.active_box_key[1].is_zero() and
                     state.active_box_key[1].eql(box.key);
 
                 if (is_left) {
                     sig.flags.left_released = true;
-                    if (box.rect.contains(e.pos[0], e.pos[1]))
+                    if (box.rect.contains(event.pos[0], event.pos[1]))
                         sig.flags.left_clicked = true;
                     state.active_box_key[0] = ui.Key.zero;
-                    e.consumed = true;
+                    event.consumed = true;
                 }
                 if (is_right) {
                     sig.flags.right_released = true;
-                    if (box.rect.contains(e.pos[0], e.pos[1]))
+                    if (box.rect.contains(event.pos[0], event.pos[1]))
                         sig.flags.right_clicked = true;
                     state.active_box_key[1] = ui.Key.zero;
-                    e.consumed = true;
+                    event.consumed = true;
                 }
             },
             .scroll => {
                 if (!box.flags.view_scroll) continue;
-                if (!box.rect.contains(e.pos[0], e.pos[1])) continue;
+                if (!box.rect.contains(event.pos[0], event.pos[1])) continue;
 
-                sig.scroll[0] +|= e.scroll[0];
-                sig.scroll[1] +|= e.scroll[1];
-                e.consumed = true;
+                sig.scroll[0] +|= event.scroll[0];
+                sig.scroll[1] +|= event.scroll[1];
+                event.consumed = true;
             },
             .key_press, .text, .mouse_move => {},
         }
@@ -372,15 +372,15 @@ pub fn signal_from_box(box: *ui.Box) ui.Signal {
 
     // -- Keyboard interaction via focus -------------------------------------
     if (box.flags.keyboard_clickable and state.focus_hot_key.eql(box.key)) {
-        ev = state.events.first;
-        while (ev) |e| : (ev = e.next) {
-            if (e.consumed) continue;
-            if (e.kind != .key_press) continue;
+        event_node = state.events.first;
+        while (event_node) |event| : (event_node = event.next) {
+            if (event.consumed) continue;
+            if (event.kind != .key_press) continue;
 
-            if (e.key == .enter or (e.key == .codepoint and e.codepoint == ' ')) {
+            if (event.key == .enter or (event.key == .codepoint and event.codepoint == ' ')) {
                 sig.flags.keyboard_pressed = true;
                 sig.flags.commit = true;
-                e.consumed = true;
+                event.consumed = true;
             }
         }
     }

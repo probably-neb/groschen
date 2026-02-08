@@ -24,11 +24,11 @@ pub fn Range(comptime T: type) type {
 
         pub const zero = std.mem.zeroes(@This());
 
-        pub fn len(self: @This()) T {
+        pub fn len(rng: @This()) T {
             if (std.meta.hasMethod(T, "sub")) {
-                return self.close.sub(self.start);
+                return rng.close.sub(rng.start);
             }
-            return self.close - self.start;
+            return rng.close - rng.start;
         }
 
         pub fn range(start: anytype, close: @TypeOf(start)) Range(@TypeOf(start)) {

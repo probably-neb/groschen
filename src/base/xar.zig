@@ -196,15 +196,15 @@ pub fn Xar(comptime T: type, comptime prealloc_item_count: usize) type {
             const new_dynamic_segments = try allocator.alloc([*]T, new_cap_shelf_count);
             errdefer allocator.free(new_dynamic_segments);
 
-            var i: ShelfIndex = 0;
-            while (i < old_shelf_count) : (i += 1) {
-                new_dynamic_segments[i] = xar.dynamic_segments[i];
+            var index: ShelfIndex = 0;
+            while (index < old_shelf_count) : (index += 1) {
+                new_dynamic_segments[index] = xar.dynamic_segments[index];
             }
-            errdefer while (i > old_shelf_count) : (i -= 1) {
-                allocator.free(new_dynamic_segments[i][0..shelf_size(i)]);
+            errdefer while (index > old_shelf_count) : (index -= 1) {
+                allocator.free(new_dynamic_segments[index][0..shelf_size(index)]);
             };
-            while (i < new_cap_shelf_count) : (i += 1) {
-                new_dynamic_segments[i] = (try allocator.alloc(T, shelf_size(i))).ptr;
+            while (index < new_cap_shelf_count) : (index += 1) {
+                new_dynamic_segments[index] = (try allocator.alloc(T, shelf_size(index))).ptr;
             }
 
             allocator.free(xar.dynamic_segments);
@@ -261,24 +261,24 @@ pub fn Xar(comptime T: type, comptime prealloc_item_count: usize) type {
             const end = start + dest.len;
             assert(end <= xar.len);
 
-            var i = start;
+            var index = start;
             if (end <= prealloc_item_count) {
-                const src = xar.prealloc_segment[i..end];
-                @memcpy(dest[i - start ..][0..src.len], src);
+                const src = xar.prealloc_segment[index..end];
+                @memcpy(dest[index - start ..][0..src.len], src);
                 return;
-            } else if (i < prealloc_item_count) {
-                const src = xar.prealloc_segment[i..];
-                @memcpy(dest[i - start ..][0..src.len], src);
-                i = prealloc_item_count;
+            } else if (index < prealloc_item_count) {
+                const src = xar.prealloc_segment[index..];
+                @memcpy(dest[index - start ..][0..src.len], src);
+                index = prealloc_item_count;
             }
 
-            while (i < end) {
-                const shelf_index = get_shelf_index(i);
-                const copy_start = get_box_index(i, shelf_index);
-                const copy_end = @min(shelf_size(shelf_index), copy_start + end - i);
+            while (index < end) {
+                const shelf_index = get_shelf_index(index);
+                const copy_start = get_box_index(index, shelf_index);
+                const copy_end = @min(shelf_size(shelf_index), copy_start + end - index);
                 const src = xar.dynamic_segments[shelf_index][copy_start..copy_end];
-                @memcpy(dest[i - start ..][0..src.len], src);
-                i += (copy_end - copy_start);
+                @memcpy(dest[index - start ..][0..src.len], src);
+                index += (copy_end - copy_start);
             }
         }
 
@@ -320,10 +320,10 @@ pub fn Xar(comptime T: type, comptime prealloc_item_count: usize) type {
         }
 
         fn free_shelves(xar: *Self, allocator: Allocator, from_count: ShelfIndex, to_count: ShelfIndex) void {
-            var i = from_count;
-            while (i != to_count) {
-                i -= 1;
-                allocator.free(xar.dynamic_segments[i][0..shelf_size(i)]);
+            var index = from_count;
+            while (index != to_count) {
+                index -= 1;
+                allocator.free(xar.dynamic_segments[index][0..shelf_size(index)]);
             }
         }
 

@@ -25,16 +25,16 @@ pub const Key = struct {
         return .{ .value = h };
     }
 
-    pub fn is_zero(self: Key) bool {
-        return self.value == 0;
+    pub fn is_zero(key: Key) bool {
+        return key.value == 0;
     }
 
-    pub fn eql(self: Key, other: Key) bool {
-        return self.value == other.value;
+    pub fn eql(key: Key, other: Key) bool {
+        return key.value == other.value;
     }
 
-    pub fn hash(self: Key) usize {
-        return @truncate(self.value);
+    pub fn hash(key: Key) usize {
+        return @truncate(key.value);
     }
 };
 
@@ -103,8 +103,8 @@ pub const Axis = enum(u1) {
     x = 0,
     y = 1,
 
-    pub fn other(self: Axis) Axis {
-        return @enumFromInt(~@intFromEnum(self));
+    pub fn other(axis: Axis) Axis {
+        return @enumFromInt(~@intFromEnum(axis));
     }
 };
 
@@ -249,24 +249,24 @@ pub const Signal = struct {
     mouse_pos: [2]u16 = .{ 0, 0 },
     scroll: [2]i16 = .{ 0, 0 },
 
-    pub fn clicked(self: Signal) bool {
-        return self.flags.left_clicked or self.flags.keyboard_pressed;
+    pub fn clicked(signal: Signal) bool {
+        return signal.flags.left_clicked or signal.flags.keyboard_pressed;
     }
 
-    pub fn pressed(self: Signal) bool {
-        return self.flags.left_pressed or self.flags.keyboard_pressed;
+    pub fn pressed(signal: Signal) bool {
+        return signal.flags.left_pressed or signal.flags.keyboard_pressed;
     }
 
-    pub fn released(self: Signal) bool {
-        return self.flags.left_released;
+    pub fn released(signal: Signal) bool {
+        return signal.flags.left_released;
     }
 
-    pub fn hovering(self: Signal) bool {
-        return self.flags.hovering;
+    pub fn hovering(signal: Signal) bool {
+        return signal.flags.hovering;
     }
 
-    pub fn dragging(self: Signal) bool {
-        return self.flags.dragging;
+    pub fn dragging(signal: Signal) bool {
+        return signal.flags.dragging;
     }
 };
 
@@ -284,8 +284,8 @@ pub const SignalFlags = packed struct {
     commit: bool = false,
     _pad: u5 = 0,
 
-    pub fn any(self: SignalFlags) bool {
-        return @as(u16, @bitCast(self)) & ~@as(u16, @bitCast(SignalFlags{ ._pad = 0b11111 })) != 0;
+    pub fn any(flags: SignalFlags) bool {
+        return @as(u16, @bitCast(flags)) & ~@as(u16, @bitCast(SignalFlags{ ._pad = 0b11111 })) != 0;
     }
 
     pub fn merge(a: SignalFlags, b: SignalFlags) SignalFlags {
@@ -408,44 +408,44 @@ pub fn Stack(comptime T: type) type {
         len: u32 = 0,
 
         fn init(default: T) Self {
-            var s: Self = .{};
-            s.entries[0] = .{ .value = default, .auto_pop = false };
-            s.len = 1;
-            return s;
+            var stack: Self = .{};
+            stack.entries[0] = .{ .value = default, .auto_pop = false };
+            stack.len = 1;
+            return stack;
         }
 
-        pub fn push(self: *Self, value: T) T {
-            const old = self.top_val();
-            assert(self.len < max);
-            self.entries[self.len] = .{ .value = value, .auto_pop = false };
-            self.len += 1;
+        pub fn push(stack: *Self, value: T) T {
+            const old = stack.top_val();
+            assert(stack.len < max);
+            stack.entries[stack.len] = .{ .value = value, .auto_pop = false };
+            stack.len += 1;
             return old;
         }
 
-        pub fn pop(self: *Self) T {
-            assert(self.len > 1);
-            self.len -= 1;
-            return self.entries[self.len].value;
+        pub fn pop(stack: *Self) T {
+            assert(stack.len > 1);
+            stack.len -= 1;
+            return stack.entries[stack.len].value;
         }
 
-        pub fn top_val(self: *const Self) T {
-            return self.entries[self.len - 1].value;
+        pub fn top_val(stack: *const Self) T {
+            return stack.entries[stack.len - 1].value;
         }
 
-        pub fn set_next(self: *Self, value: T) void {
-            assert(self.len < max);
-            self.entries[self.len] = .{ .value = value, .auto_pop = true };
-            self.len += 1;
+        pub fn set_next(stack: *Self, value: T) void {
+            assert(stack.len < max);
+            stack.entries[stack.len] = .{ .value = value, .auto_pop = true };
+            stack.len += 1;
         }
 
-        fn auto_pop_if_set(self: *Self) void {
-            if (self.len > 1 and self.entries[self.len - 1].auto_pop) {
-                self.len -= 1;
+        fn auto_pop_if_set(stack: *Self) void {
+            if (stack.len > 1 and stack.entries[stack.len - 1].auto_pop) {
+                stack.len -= 1;
             }
         }
 
-        fn reset(self: *Self) void {
-            self.len = 1;
+        fn reset(stack: *Self) void {
+            stack.len = 1;
         }
     };
 }

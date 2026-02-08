@@ -54,13 +54,13 @@ const RenderCtx = struct {
 // ---------------------------------------------------------------------------
 
 fn render_subtree(ctx: *RenderCtx, box: *Box) void {
-    const r = box.rect;
-    if (r.w == 0 or r.h == 0) return;
+    const rect = box.rect;
+    if (rect.w == 0 or rect.h == 0) return;
 
     if ((box.flags.floating_x or box.flags.floating_y) and ctx.clip_len > 0) {
-        const top = ctx.clip_stack[ctx.clip_len - 1];
-        const is_top_level = ctx.clip_len == 1 and top.col == 0 and top.row == 0 and
-            top.w == ctx.grid.cols and top.h == ctx.grid.rows;
+        const top_clip = ctx.clip_stack[ctx.clip_len - 1];
+        const is_top_level = ctx.clip_len == 1 and top_clip.col == 0 and top_clip.row == 0 and
+            top_clip.w == ctx.grid.cols and top_clip.h == ctx.grid.rows;
         if (!is_top_level) {
             if (ctx.floating_len < max_floating) {
                 ctx.floating[ctx.floating_len] = box;
@@ -79,11 +79,11 @@ fn render_subtree(ctx: *RenderCtx, box: *Box) void {
     if (box.flags.draw_text and box.display_string.len > 0) render_text(ctx, box, clip, is_hot, is_active);
 
     const pushed_clip = box.flags.clip;
-    if (pushed_clip) push_clip(ctx, r);
+    if (pushed_clip) push_clip(ctx, rect);
 
-    var child = box.first;
-    while (child) |c| : (child = c.next) {
-        render_subtree(ctx, c);
+    var next_child = box.first;
+    while (next_child) |child| : (next_child = child.next) {
+        render_subtree(ctx, child);
     }
 
     if (pushed_clip) pop_clip(ctx);

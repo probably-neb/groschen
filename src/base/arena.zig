@@ -54,15 +54,15 @@ pub fn init(options: InitOptions) InitError!Arena {
     };
 }
 
-pub fn release(self: *Arena) void {
-    self.deinit();
+pub fn release(arena: *Arena) void {
+    arena.deinit();
 }
 
-pub fn deinit(self: *Arena) void {
-    if (self.capacity > 0) {
-        virtualfree(self.memory[0..self.capacity]);
+pub fn deinit(arena: *Arena) void {
+    if (arena.capacity > 0) {
+        virtualfree(arena.memory[0..arena.capacity]);
     }
-    self.* = .zero;
+    arena.* = .zero;
 }
 
 pub fn push(arena: *Arena, size: usize) AllocError![]u8 {

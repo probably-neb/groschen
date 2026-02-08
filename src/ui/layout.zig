@@ -32,24 +32,24 @@ fn layout_axis(root: *Box, comptime axis: Axis) void {
 // -----------------------------------------------------------------------
 
 fn pass_standalone(root: *Box, comptime axis: Axis) void {
-    var it: ?*Box = root.first;
-    while (it) |b| {
-        resolve_standalone(b, axis);
-        it = tree_next_within(b, root);
+    var current: ?*Box = root.first;
+    while (current) |box| {
+        resolve_standalone(box, axis);
+        current = tree_next_within(box, root);
     }
 }
 
-fn resolve_standalone(b: *Box, comptime axis: Axis) void {
-    const ax = @intFromEnum(axis);
-    const size = b.pref_size[ax];
+fn resolve_standalone(box: *Box, comptime axis: Axis) void {
+    const axis_index = @intFromEnum(axis);
+    const size = box.pref_size[axis_index];
     switch (size.kind) {
-        .cells => b.fixed_size[ax] = size.value,
+        .cells => box.fixed_size[axis_index] = size.value,
         .text_content => {
             if (axis == .x) {
-                const text_len: f32 = @floatFromInt(display_width(b.display_string));
-                b.fixed_size[ax] = text_len + size.value + @as(f32, @floatFromInt(b.text_padding)) * 2;
+                const text_len: f32 = @floatFromInt(display_width(box.display_string));
+                box.fixed_size[axis_index] = text_len + size.value + @as(f32, @floatFromInt(box.text_padding)) * 2;
             } else {
-                b.fixed_size[ax] = 1 + size.value;
+                box.fixed_size[axis_index] = 1 + size.value;
             }
         },
         else => {},
@@ -61,34 +61,34 @@ fn resolve_standalone(b: *Box, comptime axis: Axis) void {
 // -----------------------------------------------------------------------
 
 fn pass_upwards_dependent(root: *Box, comptime axis: Axis) void {
-    var it: ?*Box = root.first;
-    while (it) |b| {
-        resolve_upwards(b, axis);
-        it = tree_next_within(b, root);
+    var current: ?*Box = root.first;
+    while (current) |box| {
+        resolve_upwards(box, axis);
+        current = tree_next_within(box, root);
     }
 }
 
-fn resolve_upwards(b: *Box, comptime axis: Axis) void {
-    const ax = @intFromEnum(axis);
-    if (b.pref_size[ax].kind != .parent_pct) return;
+fn resolve_upwards(box: *Box, comptime axis: Axis) void {
+    const axis_index = @intFromEnum(axis);
+    if (box.pref_size[axis_index].kind != .parent_pct) return;
 
-    const frac = b.pref_size[ax].value;
-    const avail = ancestor_resolved_size(b, axis);
-    b.fixed_size[ax] = @round(avail * frac);
+    const frac = box.pref_size[axis_index].value;
+    const avail = ancestor_resolved_size(box, axis);
+    box.fixed_size[axis_index] = @round(avail * frac);
 }
 
-fn ancestor_resolved_size(b: *Box, comptime axis: Axis) f32 {
-    const ax = @intFromEnum(axis);
-    var p = b.parent;
-    while (p) |ancestor| {
-        const kind = ancestor.pref_size[ax].kind;
+fn ancestor_resolved_size(box: *Box, comptime axis: Axis) f32 {
+    const axis_index = @intFromEnum(axis);
+    var parent = box.parent;
+    while (parent) |ancestor| {
+        const kind = ancestor.pref_size[axis_index].kind;
         if (kind == .cells or kind == .text_content or kind == .null) {
             const insets = border_insets(ancestor);
-            return @max(ancestor.fixed_size[ax] - insets.before[ax] - insets.after[ax], 0);
+            return @max(ancestor.fixed_size[axis_index] - insets.before[axis_index] - insets.after[axis_index], 0);
         }
-        if (kind == .parent_pct and ancestor.fixed_size[ax] > 0) {
+        if (kind == .parent_pct and ancestor.fixed_size[axis_index] > 0) {
             const insets = border_insets(ancestor);
-            return @max(ancestor.fixed_size[ax] - insets.before[ax] - insets.after[ax], 0);
+            return @max(ancestor.fixed_size[axis_index] - insets.before[axis_index] - insets.after[axis_index], 0);
         }
         // A children_sum ancestor's size is defined by its children, so
         // resolving against it (or any ancestor above it) creates a
@@ -100,7 +100,7 @@ fn ancestor_resolved_size(b: *Box, comptime axis: Axis) f32 {
         // so they don't use parent_pct for cross-axis fill in
         // children_sum containers the way we do.
         if (kind == .children_sum) return 0;
-        p = ancestor.parent;
+        parent = ancestor.parent;
     }
     return 0;
 }
@@ -114,40 +114,40 @@ fn pass_downwards_dependent(root: *Box, comptime axis: Axis) void {
 }
 
 fn post_order_walk(node: *Box, comptime axis: Axis) void {
-    var child = node.first;
-    while (child) |c| {
-        post_order_walk(c, axis);
-        child = c.next;
+    var next_child = node.first;
+    while (next_child) |child| {
+        post_order_walk(child, axis);
+        next_child = child.next;
     }
     resolve_downwards(node, axis);
 }
 
-fn resolve_downwards(b: *Box, comptime axis: Axis) void {
-    const ax = @intFromEnum(axis);
-    if (b.pref_size[ax].kind != .children_sum) return;
+fn resolve_downwards(box: *Box, comptime axis: Axis) void {
+    const axis_index = @intFromEnum(axis);
+    if (box.pref_size[axis_index].kind != .children_sum) return;
 
-    const insets = border_insets(b);
+    const insets = border_insets(box);
 
-    if (axis == b.child_layout_axis) {
+    if (axis == box.child_layout_axis) {
         var sum: f32 = 0;
-        var child = b.first;
-        while (child) |c| {
-            if (!is_floating(c, axis)) {
-                sum += c.fixed_size[ax];
+        var next_child = box.first;
+        while (next_child) |child| {
+            if (!is_floating(child, axis)) {
+                sum += child.fixed_size[axis_index];
             }
-            child = c.next;
+            next_child = child.next;
         }
-        b.fixed_size[ax] = sum + insets.before[ax] + insets.after[ax];
+        box.fixed_size[axis_index] = sum + insets.before[axis_index] + insets.after[axis_index];
     } else {
         var max_cross: f32 = 0;
-        var child = b.first;
-        while (child) |c| {
-            if (!is_floating(c, axis)) {
-                max_cross = @max(max_cross, c.fixed_size[ax]);
+        var next_child = box.first;
+        while (next_child) |child| {
+            if (!is_floating(child, axis)) {
+                max_cross = @max(max_cross, child.fixed_size[axis_index]);
             }
-            child = c.next;
+            next_child = child.next;
         }
-        b.fixed_size[ax] = max_cross + insets.before[ax] + insets.after[ax];
+        box.fixed_size[axis_index] = max_cross + insets.before[axis_index] + insets.after[axis_index];
     }
 }
 
@@ -160,9 +160,9 @@ fn pass_constraints(root: *Box, comptime axis: Axis) void {
 }
 
 fn constrain_subtree(parent: *Box, comptime axis: Axis) void {
-    const ax = @intFromEnum(axis);
+    const axis_index = @intFromEnum(axis);
     const insets = border_insets(parent);
-    const avail = @max(parent.fixed_size[ax] - insets.before[ax] - insets.after[ax], 0);
+    const avail = @max(parent.fixed_size[axis_index] - insets.before[axis_index] - insets.after[axis_index], 0);
     const allow_overflow = if (axis == .x) parent.flags.allow_overflow_x else parent.flags.allow_overflow_y;
 
     if (!allow_overflow) {
@@ -176,43 +176,43 @@ fn constrain_subtree(parent: *Box, comptime axis: Axis) void {
     // When a parent allows overflow, its size is now finalized —
     // re-resolve ParentPct children against it.
     if (allow_overflow) {
-        var child = parent.first;
-        while (child) |c| {
-            if (c.pref_size[ax].kind == .parent_pct) {
-                c.fixed_size[ax] = avail * c.pref_size[ax].value;
+        var next_child = parent.first;
+        while (next_child) |child| {
+            if (child.pref_size[axis_index].kind == .parent_pct) {
+                child.fixed_size[axis_index] = avail * child.pref_size[axis_index].value;
             }
-            child = c.next;
+            next_child = child.next;
         }
     }
 
     // Enforce min_size.
     {
-        var child = parent.first;
-        while (child) |c| {
-            c.fixed_size[ax] = @max(c.fixed_size[ax], c.min_size[ax]);
-            child = c.next;
+        var next_child = parent.first;
+        while (next_child) |child| {
+            child.fixed_size[axis_index] = @max(child.fixed_size[axis_index], child.min_size[axis_index]);
+            next_child = child.next;
         }
     }
 
-    var child = parent.first;
-    while (child) |c| {
-        constrain_subtree(c, axis);
-        child = c.next;
+    var next_child = parent.first;
+    while (next_child) |child| {
+        constrain_subtree(child, axis);
+        next_child = child.next;
     }
 }
 
 fn constrain_layout_axis(parent: *Box, comptime axis: Axis, avail: f32) void {
-    const ax = @intFromEnum(axis);
+    const axis_index = @intFromEnum(axis);
     var total: f32 = 0;
     var total_weighted: f32 = 0;
 
-    var child = parent.first;
-    while (child) |c| {
-        if (!is_floating(c, axis)) {
-            total += c.fixed_size[ax];
-            total_weighted += c.fixed_size[ax] * (1.0 - c.pref_size[ax].strictness);
+    var next_child = parent.first;
+    while (next_child) |child| {
+        if (!is_floating(child, axis)) {
+            total += child.fixed_size[axis_index];
+            total_weighted += child.fixed_size[axis_index] * (1.0 - child.pref_size[axis_index].strictness);
         }
-        child = c.next;
+        next_child = child.next;
     }
 
     const violation = total - avail;
@@ -220,25 +220,25 @@ fn constrain_layout_axis(parent: *Box, comptime axis: Axis, avail: f32) void {
 
     const fixup_pct = @min(violation / total_weighted, 1.0);
 
-    child = parent.first;
-    while (child) |c| {
-        if (!is_floating(c, axis)) {
-            const fixup = @max(c.fixed_size[ax] * (1.0 - c.pref_size[ax].strictness), 0);
-            c.fixed_size[ax] -= fixup * fixup_pct;
+    next_child = parent.first;
+    while (next_child) |child| {
+        if (!is_floating(child, axis)) {
+            const fixup = @max(child.fixed_size[axis_index] * (1.0 - child.pref_size[axis_index].strictness), 0);
+            child.fixed_size[axis_index] -= fixup * fixup_pct;
         }
-        child = c.next;
+        next_child = child.next;
     }
 }
 
 fn constrain_cross_axis(parent: *Box, comptime axis: Axis, avail: f32) void {
-    const ax = @intFromEnum(axis);
+    const axis_index = @intFromEnum(axis);
 
-    var child = parent.first;
-    while (child) |c| {
-        if (!is_floating(c, axis)) {
-            c.fixed_size[ax] = @min(c.fixed_size[ax], avail);
+    var next_child = parent.first;
+    while (next_child) |child| {
+        if (!is_floating(child, axis)) {
+            child.fixed_size[axis_index] = @min(child.fixed_size[axis_index], avail);
         }
-        child = c.next;
+        next_child = child.next;
     }
 }
 
@@ -251,7 +251,7 @@ fn pass_position(root: *Box, comptime axis: Axis) void {
 }
 
 fn position_subtree(parent: *Box, comptime axis: Axis) void {
-    const ax = @intFromEnum(axis);
+    const axis_index = @intFromEnum(axis);
     const insets = border_insets(parent);
 
     const parent_origin: f32 = if (axis == .x)
@@ -259,69 +259,69 @@ fn position_subtree(parent: *Box, comptime axis: Axis) void {
     else
         @floatFromInt(parent.rect.row);
 
-    const avail = @max(parent.fixed_size[ax] - insets.before[ax] - insets.after[ax], 0);
-    var cursor: f32 = parent_origin + insets.before[ax] - parent.view_off[ax];
+    const avail = @max(parent.fixed_size[axis_index] - insets.before[axis_index] - insets.after[axis_index], 0);
+    var cursor: f32 = parent_origin + insets.before[axis_index] - parent.view_off[axis_index];
 
-    var child = parent.first;
-    while (child) |c| {
-        if (is_floating(c, axis)) {
-            const pos = c.fixed_position[ax];
-            set_rect_axis(c, axis, pos, c.fixed_size[ax]);
+    var next_child = parent.first;
+    while (next_child) |child| {
+        if (is_floating(child, axis)) {
+            const pos = child.fixed_position[axis_index];
+            set_rect_axis(child, axis, pos, child.fixed_size[axis_index]);
         } else {
-            const size = snap(c.fixed_size[ax]);
+            const size = snap(child.fixed_size[axis_index]);
             if (axis == parent.child_layout_axis) {
-                set_rect_axis(c, axis, snap(cursor), size);
-                cursor += c.fixed_size[ax];
+                set_rect_axis(child, axis, snap(cursor), size);
+                cursor += child.fixed_size[axis_index];
             } else {
-                const cross_pos = parent_origin + insets.before[ax];
-                if (c.fixed_size[ax] <= 0) {
-                    c.fixed_size[ax] = avail;
+                const cross_pos = parent_origin + insets.before[axis_index];
+                if (child.fixed_size[axis_index] <= 0) {
+                    child.fixed_size[axis_index] = avail;
                 }
-                set_rect_axis(c, axis, snap(cross_pos), snap(c.fixed_size[ax]));
+                set_rect_axis(child, axis, snap(cross_pos), snap(child.fixed_size[axis_index]));
             }
         }
 
-        c.fixed_size[ax] = @floatFromInt(rect_size(c, axis));
+        child.fixed_size[axis_index] = @floatFromInt(rect_size(child, axis));
 
-        position_subtree(c, axis);
-        child = c.next;
+        position_subtree(child, axis);
+        next_child = child.next;
     }
 }
 
-fn set_rect_axis(b: *Box, comptime axis: Axis, pos: f32, size: f32) void {
-    const p = clamp_u16(pos);
-    const s = clamp_u16(size);
+fn set_rect_axis(box: *Box, comptime axis: Axis, pos: f32, size: f32) void {
+    const clamped_pos = clamp_u16(pos);
+    const clamped_size = clamp_u16(size);
     if (axis == .x) {
-        b.rect.col = p;
-        b.rect.w = s;
+        box.rect.col = clamped_pos;
+        box.rect.w = clamped_size;
     } else {
-        b.rect.row = p;
-        b.rect.h = s;
+        box.rect.row = clamped_pos;
+        box.rect.h = clamped_size;
     }
 }
 
-fn rect_size(b: *const Box, comptime axis: Axis) u16 {
-    return if (axis == .x) b.rect.w else b.rect.h;
+fn rect_size(box: *const Box, comptime axis: Axis) u16 {
+    return if (axis == .x) box.rect.w else box.rect.h;
 }
 
 // -----------------------------------------------------------------------
 // Helpers
 // -----------------------------------------------------------------------
 
-fn border_insets(b: *const Box) struct { before: [2]f32, after: [2]f32 } {
+fn border_insets(box: *const Box) struct { before: [2]f32, after: [2]f32 } {
     var before = [2]f32{ 0, 0 };
     var after = [2]f32{ 0, 0 };
-    if (b.flags.draw_border) {
-        if (b.flags.draw_side_left) before[0] = 1;
-        if (b.flags.draw_side_right) after[0] = 1;
-        if (b.flags.draw_side_top) before[1] = 1;
-        if (b.flags.draw_side_bottom) after[1] = 1;
+    if (box.flags.draw_border) {
+        if (box.flags.draw_side_left) before[0] = 1;
+        if (box.flags.draw_side_right) after[0] = 1;
+        if (box.flags.draw_side_top) before[1] = 1;
+        if (box.flags.draw_side_bottom) after[1] = 1;
     }
     return .{ .before = before, .after = after };
 }
 
-fn is_floating(b: *const Box, comptime axis: Axis) bool {
-    return if (axis == .x) b.flags.floating_x else b.flags.floating_y;
+fn is_floating(box: *const Box, comptime axis: Axis) bool {
+    return if (axis == .x) box.flags.floating_x else box.flags.floating_y;
 }
 
 fn tree_next_within(current: *Box, root: *const Box) ?*Box {

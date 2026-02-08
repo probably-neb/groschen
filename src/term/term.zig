@@ -344,35 +344,35 @@ pub const Term = struct {
     input_len: usize = 0,
     input_pos: usize = 0,
 
-    pub fn deinit(self: *Term) void {
-        self.tty.writeAll(mode.exit_all) catch {};
-        posix.tcsetattr(self.tty_fd, .FLUSH, self.original_termios) catch {};
+    pub fn deinit(t: *Term) void {
+        t.tty.writeAll(mode.exit_all) catch {};
+        posix.tcsetattr(t.tty_fd, .FLUSH, t.original_termios) catch {};
         global_tty_fd = -1;
     }
 
     // -- Grid operations ----------------------------------------------------
 
-    pub fn cell_at(self: *Term, col: u16, row: u16) ?*Cell {
-        if (col >= self.cols or row >= self.rows) return null;
-        return &self.back[@as(usize, row) * @as(usize, self.cols) + @as(usize, col)];
+    pub fn cell_at(t: *Term, col: u16, row: u16) ?*Cell {
+        if (col >= t.cols or row >= t.rows) return null;
+        return &t.back[@as(usize, row) * @as(usize, t.cols) + @as(usize, col)];
     }
 
-    pub fn fill_rect(self: *Term, x: u16, y: u16, w: u16, h: u16, cell: Cell) void {
-        const x_end = @min(@as(u32, x) + w, self.cols);
-        const y_end = @min(@as(u32, y) + h, self.rows);
+    pub fn fill_rect(t: *Term, x: u16, y: u16, w: u16, h: u16, cell: Cell) void {
+        const x_end = @min(@as(u32, x) + w, t.cols);
+        const y_end = @min(@as(u32, y) + h, t.rows);
         var row: u32 = y;
         while (row < y_end) : (row += 1) {
             var col: u32 = x;
             while (col < x_end) : (col += 1) {
-                const idx = row * @as(u32, self.cols) + col;
-                self.back[idx] = cell;
+                const idx = row * @as(u32, t.cols) + col;
+                t.back[idx] = cell;
             }
         }
     }
 
-    pub fn write_text(self: *Term, col: u16, row: u16, max_width: u16, text: []const u8, fg: Color, bg: Color, attrs: Attrs) u16 {
-        if (row >= self.rows or col >= self.cols) return 0;
-        const limit: u16 = @min(col +| max_width, self.cols);
+    pub fn write_text(t: *Term, col: u16, row: u16, max_width: u16, text: []const u8, fg: Color, bg: Color, attrs: Attrs) u16 {
+        if (row >= t.rows or col >= t.cols) return 0;
+        const limit: u16 = @min(col +| max_width, t.cols);
         var cur_col: u16 = col;
         var i: usize = 0;
         while (i < text.len and cur_col < limit) {
@@ -391,10 +391,10 @@ pub const Term = struct {
                 continue;
             }
             if (cur_col + w > limit) break;
-            const idx = @as(usize, row) * @as(usize, self.cols) + @as(usize, cur_col);
-            self.back[idx] = .{ .codepoint = cp, .fg = fg, .bg = bg, .attrs = attrs };
-            if (w == 2 and cur_col + 1 < self.cols) {
-                self.back[idx + 1] = .{ .codepoint = 0, .fg = fg, .bg = bg, .attrs = attrs };
+            const idx = @as(usize, row) * @as(usize, t.cols) + @as(usize, cur_col);
+            t.back[idx] = .{ .codepoint = cp, .fg = fg, .bg = bg, .attrs = attrs };
+            if (w == 2 and cur_col + 1 < t.cols) {
+                t.back[idx + 1] = .{ .codepoint = 0, .fg = fg, .bg = bg, .attrs = attrs };
             }
             cur_col += w;
             i += cp_len;
@@ -402,30 +402,30 @@ pub const Term = struct {
         return cur_col - col;
     }
 
-    pub fn clear(self: *Term) void {
-        @memset(self.back, blank_cell);
+    pub fn clear(t: *Term) void {
+        @memset(t.back, blank_cell);
     }
 
     // -- Resize -------------------------------------------------------------
 
-    pub fn check_resize(self: *Term) !bool {
+    pub fn check_resize(t: *Term) !bool {
         if (!resize_pending.swap(false, .acquire)) return false;
-        const size = query_size(self.tty_fd);
-        if (size.cols == self.cols and size.rows == self.rows) return false;
-        self.cols = size.cols;
-        self.rows = size.rows;
+        const size = query_size(t.tty_fd);
+        if (size.cols == t.cols and size.rows == t.rows) return false;
+        t.cols = size.cols;
+        t.rows = size.rows;
         const total = @as(usize, size.cols) * @as(usize, size.rows);
-        self.front = try self.arena.alloc(Cell, total);
-        self.back = try self.arena.alloc(Cell, total);
-        @memset(self.front, blank_cell);
-        @memset(self.back, blank_cell);
+        t.front = try t.arena.alloc(Cell, total);
+        t.back = try t.arena.alloc(Cell, total);
+        @memset(t.front, blank_cell);
+        @memset(t.back, blank_cell);
         return true;
     }
 
     // -- Flush (diff + ANSI output) -----------------------------------------
 
-    pub fn flush(self: *Term) !void {
-        const scratch = Arena.get_scratch(&.{self.arena});
+    pub fn flush(t: *Term) !void {
+        const scratch = Arena.get_scratch(&.{t.arena});
         defer scratch.release();
         const arena: *Arena = scratch.arena;
         const start = arena.get_pos();
@@ -439,13 +439,13 @@ pub const Term = struct {
 
         try emit(arena, mode.cursor_hide);
 
-        for (0..self.rows) |r| {
-            const row: u16 = @intCast(r);
-            for (0..self.cols) |cl| {
-                const col: u16 = @intCast(cl);
-                const idx = @as(usize, row) * @as(usize, self.cols) + @as(usize, col);
-                const back_cell = self.back[idx];
-                const front_cell = self.front[idx];
+        for (0..t.rows) |row_idx| {
+            const row: u16 = @intCast(row_idx);
+            for (0..t.cols) |col_idx| {
+                const col: u16 = @intCast(col_idx);
+                const idx = @as(usize, row) * @as(usize, t.cols) + @as(usize, col);
+                const back_cell = t.back[idx];
+                const front_cell = t.front[idx];
 
                 if (back_cell.eql(front_cell)) {
                     cursor_valid = false;
@@ -480,47 +480,47 @@ pub const Term = struct {
 
         const end = arena.get_pos();
         if (end > start) {
-            try self.tty.writeAll(arena.memory[start..end]);
+            try t.tty.writeAll(arena.memory[start..end]);
         }
 
-        const tmp = self.front;
-        self.front = self.back;
-        self.back = tmp;
+        const tmp = t.front;
+        t.front = t.back;
+        t.back = tmp;
     }
 
     // -- Input parsing ------------------------------------------------------
 
-    pub fn poll_event(self: *Term, timeout_ms: i32) !?InputEvent {
+    pub fn poll_event(t: *Term, timeout_ms: i32) !?InputEvent {
         if (resize_pending.load(.acquire)) return .resize;
 
-        if (self.input_pos < self.input_len) {
-            return self.drain_next();
+        if (t.input_pos < t.input_len) {
+            return t.drain_next();
         }
 
         var fds = [_]posix.pollfd{.{
-            .fd = self.tty_fd,
+            .fd = t.tty_fd,
             .events = posix.POLL.IN,
             .revents = 0,
         }};
-        const n = try posix.poll(&fds, timeout_ms);
-        if (n == 0) return null;
+        const ready = try posix.poll(&fds, timeout_ms);
+        if (ready == 0) return null;
 
-        const bytes_read = self.tty.read(&self.input_buf) catch |err| switch (err) {
+        const bytes_read = t.tty.read(&t.input_buf) catch |err| switch (err) {
             error.WouldBlock => return null,
             else => return err,
         };
         if (bytes_read == 0) return null;
-        self.input_len = bytes_read;
-        self.input_pos = 0;
+        t.input_len = bytes_read;
+        t.input_pos = 0;
 
-        return self.drain_next();
+        return t.drain_next();
     }
 
-    fn drain_next(self: *Term) ?InputEvent {
-        while (self.input_pos < self.input_len) {
-            const buf = self.input_buf[self.input_pos..self.input_len];
+    fn drain_next(t: *Term) ?InputEvent {
+        while (t.input_pos < t.input_len) {
+            const buf = t.input_buf[t.input_pos..t.input_len];
             const result = parse_input(buf);
-            self.input_pos += result.consumed;
+            t.input_pos += result.consumed;
             if (result.event) |ev| return ev;
             if (result.consumed == 0) return null;
         }
@@ -657,24 +657,24 @@ fn parse_csi(buf: []const u8) ParseResult {
 
     var params: [8]u16 = .{0} ** 8;
     var param_count: usize = 0;
-    var i: usize = 2;
-    while (i < buf.len) : (i += 1) {
-        if (is_digit(buf[i])) {
+    var index: usize = 2;
+    while (index < buf.len) : (index += 1) {
+        if (is_digit(buf[index])) {
             if (param_count == 0) param_count = 1;
-            params[param_count - 1] = params[param_count - 1] *| 10 +| (buf[i] - '0');
-        } else if (buf[i] == ';') {
+            params[param_count - 1] = params[param_count - 1] *| 10 +| (buf[index] - '0');
+        } else if (buf[index] == ';') {
             param_count += 1;
             if (param_count > params.len) break;
-        } else if (is_csi_final(buf[i])) {
+        } else if (is_csi_final(buf[index])) {
             break;
         } else {
             break;
         }
     }
-    if (i >= buf.len) return .{ .event = .{ .key = .{ .key = .escape } }, .consumed = buf.len };
+    if (index >= buf.len) return .{ .event = .{ .key = .{ .key = .escape } }, .consumed = buf.len };
 
-    const final_byte = buf[i];
-    const consumed = i + 1;
+    const final_byte = buf[index];
+    const consumed = index + 1;
     const mods = if (param_count >= 2) decode_xterm_mods(params[1]) else Modifiers{};
 
     const key_event: KeyEvent = switch (final_byte) {
@@ -710,19 +710,19 @@ fn parse_ss3(buf: []const u8) ParseResult {
 }
 
 fn parse_sgr_mouse(buf: []const u8) ParseResult {
-    var i: usize = 3;
+    var index: usize = 3;
     var params: [3]u16 = .{ 0, 0, 0 };
     var param_idx: usize = 0;
-    while (i < buf.len) : (i += 1) {
-        if (is_digit(buf[i])) {
-            params[param_idx] = params[param_idx] *| 10 +| (buf[i] - '0');
-        } else if (buf[i] == ';') {
+    while (index < buf.len) : (index += 1) {
+        if (is_digit(buf[index])) {
+            params[param_idx] = params[param_idx] *| 10 +| (buf[index] - '0');
+        } else if (buf[index] == ';') {
             param_idx += 1;
             if (param_idx >= 3) break;
-        } else if (is_sgr_mouse_final(buf[i])) {
+        } else if (is_sgr_mouse_final(buf[index])) {
             return .{
-                .event = .{ .mouse = decode_sgr_mouse(params, is_mouse_release(buf[i])) },
-                .consumed = i + 1,
+                .event = .{ .mouse = decode_sgr_mouse(params, is_mouse_release(buf[index])) },
+                .consumed = index + 1,
             };
         } else {
             break;
