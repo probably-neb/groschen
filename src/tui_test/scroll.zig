@@ -40,8 +40,8 @@ const scrollbar_fg: Color = .{ .ansi = .bright_white };
 // ---------------------------------------------------------------------------
 
 fn build_ui(app: *App, visible_rows: u32) !void {
-    _ = ui.push_color(fg_color);
-    defer _ = ui.pop_color();
+    ui.push_color(fg_color);
+    defer ui.pop_color();
 
     build_title_bar();
     try build_main_area(app, visible_rows);
@@ -52,15 +52,15 @@ fn build_title_bar() void {
     ui.next_axis(.x);
     ui.next_width(.pct(1, 1));
     ui.next_height(.cells(1, 1));
-    _ = ui.push_bg(accent_color);
-    defer _ = ui.pop_bg();
+    ui.push_bg(accent_color);
+    defer ui.pop_bg();
     _ = ui.push_parent_box("", .{ .draw_background = true });
     defer ui.pop_parent();
 
     ui.next_width(.pct(1, 0));
     ui.next_height(.pct(1, 0));
-    _ = ui.push_color(bg_color);
-    defer _ = ui.pop_color();
+    ui.push_color(bg_color);
+    defer ui.pop_color();
     _ = ui.build_box(" Scroll Demo — Virtualized List", .{ .draw_text = true });
 }
 
@@ -110,10 +110,10 @@ fn build_scroll_row(app: *App, index: u32) void {
     const item_str = ui.arena_print(" Item {d}###item_{d}", .{ index, index }) catch " Item ";
     ui.next_width(.pct(1, 1));
     ui.next_height(.cells(1, 1));
-    _ = ui.push_bg(row_bg);
-    defer _ = ui.pop_bg();
-    _ = ui.push_color(if (is_selected) accent_color else fg_color);
-    defer _ = ui.pop_color();
+    ui.push_bg(row_bg);
+    defer ui.pop_bg();
+    ui.push_color(if (is_selected) accent_color else fg_color);
+    defer ui.pop_color();
     const item_box = ui.build_box(item_str, .{
         .clickable = true,
         .draw_background = true,
@@ -133,8 +133,8 @@ fn build_scrollbar_from_box(container: *ui.Box, visible_rows: u32) void {
 
     ui.next_width(.cells(1, 1));
     ui.next_height(.pct(1, 1));
-    _ = ui.push_bg(scrollbar_bg);
-    defer _ = ui.pop_bg();
+    ui.push_bg(scrollbar_bg);
+    defer ui.pop_bg();
     _ = ui.push_parent_box("scrollbar###sbar", .{ .draw_background = true });
     defer ui.pop_parent();
 
@@ -150,8 +150,8 @@ fn build_scrollbar_from_box(container: *ui.Box, visible_rows: u32) void {
 
     ui.next_width(.cells(1, 1));
     ui.next_height(.cells(thumb_h, 1));
-    _ = ui.push_bg(scrollbar_fg);
-    defer _ = ui.pop_bg();
+    ui.push_bg(scrollbar_fg);
+    defer ui.pop_bg();
     _ = ui.build_box("scrollbar_thumb###thumb", .{ .draw_background = true });
 }
 
@@ -174,15 +174,15 @@ fn build_status_bar(app: *App, visible_rows: u32) !void {
     ui.next_axis(.x);
     ui.next_width(.pct(1, 1));
     ui.next_height(.cells(1, 1));
-    _ = ui.push_bg(accent_color);
-    defer _ = ui.pop_bg();
+    ui.push_bg(accent_color);
+    defer ui.pop_bg();
     _ = ui.push_parent_box("", .{ .draw_background = true });
     defer ui.pop_parent();
 
     ui.next_width(.pct(1, 0));
     ui.next_height(.pct(1, 0));
-    _ = ui.push_color(bg_color);
-    defer _ = ui.pop_color();
+    ui.push_color(bg_color);
+    defer ui.pop_color();
     _ = ui.build_box(status_str, .{ .draw_text = true });
 }
 

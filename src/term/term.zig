@@ -115,7 +115,7 @@ pub const Color = union(enum) {
     }
 };
 
-pub const Attrs = packed struct {
+pub const Attrs = packed struct(u8) {
     bold: bool = false,
     dim: bool = false,
     italic: bool = false,
@@ -123,10 +123,6 @@ pub const Attrs = packed struct {
     reverse: bool = false,
     strikethrough: bool = false,
     _pad: u2 = 0,
-
-    pub fn eql(a: Attrs, b: Attrs) bool {
-        return @as(u8, @bitCast(a)) == @as(u8, @bitCast(b));
-    }
 };
 
 pub const Cell = struct {
@@ -139,7 +135,7 @@ pub const Cell = struct {
         return a.codepoint == b.codepoint and
             a.fg.eql(b.fg) and
             a.bg.eql(b.bg) and
-            a.attrs.eql(b.attrs);
+            a.attrs == b.attrs;
     }
 };
 
@@ -182,17 +178,13 @@ pub const Key = enum {
     f12,
 };
 
-pub const Modifiers = packed struct {
+pub const Modifiers = packed struct(u8) {
     shift: bool = false,
     alt: bool = false,
     ctrl: bool = false,
     _pad: u5 = 0,
 
     pub const none: Modifiers = .{};
-
-    pub fn eql(a: Modifiers, b: Modifiers) bool {
-        return @as(u8, @bitCast(a)) == @as(u8, @bitCast(b));
-    }
 };
 
 pub const KeyEvent = struct {
@@ -474,7 +466,7 @@ pub const Term = struct {
             }
         }
 
-        if (cur_fg != .default or cur_bg != .default or !cur_attrs.eql(.{})) {
+        if (cur_fg != .default or cur_bg != .default or cur_attrs != Attrs{}) {
             try emit(arena, sgr.reset);
         }
 

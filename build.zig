@@ -15,6 +15,7 @@ pub fn build(b: *std.Build) void {
         .{ .name = "term", .path = "src/term/term.zig" },
         .{ .name = "ui", .path = "src/ui/ui.zig" },
         .{ .name = "base", .path = "src/base/base.zig" },
+        .{ .name = "plaid", .path = "src/plaid/plaid.zig" },
     };
 
     var modules: [module_specs.len]*std.Build.Module = undefined;

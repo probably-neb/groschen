@@ -69,8 +69,8 @@ fn set_message_fmt(app: *App, comptime format: []const u8, args: anytype, fallba
 // ---------------------------------------------------------------------------
 
 fn build_ui(app: *App) !void {
-    _ = ui.push_color(fg_color);
-    defer _ = ui.pop_color();
+    ui.push_color(fg_color);
+    defer ui.pop_color();
 
     build_title_bar();
     try build_main_area(app);
@@ -87,8 +87,8 @@ fn build_title_bar() void {
 
     ui.next_width(.pct(1, 0));
     ui.next_height(.pct(1, 0));
-    _ = ui.push_color(bg_color);
-    defer _ = ui.pop_color();
+    ui.push_color(bg_color);
+    defer ui.pop_color();
     _ = ui.build_box(" Widget Demo — All Widgets", .{ .draw_text = true });
 }
 
@@ -124,17 +124,17 @@ fn build_left_column(app: *App) !void {
 
 fn build_basic_widgets_panel(app: *App) !void {
     ui.next_width(.pct(1, 0));
-    _ = ui.push_bg(panel_bg);
-    defer _ = ui.pop_bg();
-    _ = ui.push_border_color(muted_color);
-    defer _ = ui.pop_border_color();
+    ui.push_bg(panel_bg);
+    defer ui.pop_bg();
+    ui.push_border_color(muted_color);
+    defer ui.pop_border_color();
     _ = widgets.panel_begin(" Basic Widgets ##basic_panel");
     defer widgets.panel_end();
 
     ui.spacer(.y, 1);
 
-    _ = ui.push_text_padding(1);
-    defer _ = ui.pop_text_padding();
+    ui.push_text_padding(1);
+    defer ui.pop_text_padding();
     _ = widgets.label("This is a label widget.");
 
     ui.spacer(.y, 1);
@@ -143,10 +143,10 @@ fn build_basic_widgets_panel(app: *App) !void {
 
     ui.spacer(.y, 1);
 
-    _ = ui.push_text_padding(1);
-    defer _ = ui.pop_text_padding();
-    _ = ui.push_color(app.message_color);
-    defer _ = ui.pop_color();
+    ui.push_text_padding(1);
+    defer ui.pop_text_padding();
+    ui.push_color(app.message_color);
+    defer ui.pop_color();
     _ = widgets.label(app.message);
 
     ui.spacer(.y, 1);
@@ -196,53 +196,53 @@ fn build_button_row(app: *App) void {
 }
 
 fn build_button(label: []const u8, border_color: Color) bool {
-    _ = ui.push_bg(button_bg);
-    defer _ = ui.pop_bg();
-    _ = ui.push_border_color(border_color);
-    defer _ = ui.pop_border_color();
+    ui.push_bg(button_bg);
+    defer ui.pop_bg();
+    ui.push_border_color(border_color);
+    defer ui.pop_border_color();
     return widgets.button(label).clicked();
 }
 
 fn build_text_input_panel(app: *App) !void {
     ui.next_width(.pct(1, 0));
-    _ = ui.push_bg(panel_bg);
-    defer _ = ui.pop_bg();
-    _ = ui.push_border_color(muted_color);
-    defer _ = ui.pop_border_color();
+    ui.push_bg(panel_bg);
+    defer ui.pop_bg();
+    ui.push_border_color(muted_color);
+    defer ui.pop_border_color();
     _ = widgets.panel_begin(" Text Input ##input_panel");
     defer widgets.panel_end();
 
     ui.spacer(.y, 1);
 
     {
-        _ = ui.push_text_padding(1);
-        defer _ = ui.pop_text_padding();
+        ui.push_text_padding(1);
+        defer ui.pop_text_padding();
         _ = widgets.label("Name:");
     }
 
     {
         ui.next_width(.pct(1, 0));
-        _ = ui.push_bg(input_bg);
-        defer _ = ui.pop_bg();
-        _ = ui.push_border_color(muted_color);
-        defer _ = ui.pop_border_color();
+        ui.push_bg(input_bg);
+        defer ui.pop_bg();
+        ui.push_border_color(muted_color);
+        defer ui.pop_border_color();
         _ = widgets.line_edit("name_field###name_edit", &app.name_state);
     }
 
     ui.spacer(.y, 1);
 
     {
-        _ = ui.push_text_padding(1);
-        defer _ = ui.pop_text_padding();
+        ui.push_text_padding(1);
+        defer ui.pop_text_padding();
         _ = widgets.label("Search:");
     }
 
     {
         ui.next_width(.pct(1, 0));
-        _ = ui.push_bg(input_bg);
-        defer _ = ui.pop_bg();
-        _ = ui.push_border_color(muted_color);
-        defer _ = ui.pop_border_color();
+        ui.push_bg(input_bg);
+        defer ui.pop_bg();
+        ui.push_border_color(muted_color);
+        defer ui.pop_border_color();
         _ = widgets.line_edit("search_field###search_edit", &app.search_state);
     }
 
@@ -266,34 +266,34 @@ fn build_right_column(app: *App) !void {
 
 fn build_collapsible_panel(app: *App) void {
     ui.next_width(.pct(1, 0));
-    _ = ui.push_bg(panel_bg);
-    defer _ = ui.pop_bg();
-    _ = ui.push_border_color(muted_color);
-    defer _ = ui.pop_border_color();
+    ui.push_bg(panel_bg);
+    defer ui.pop_bg();
+    ui.push_border_color(muted_color);
+    defer ui.pop_border_color();
     _ = widgets.panel_begin(" Collapsible Sections ##collapse_panel");
     defer widgets.panel_end();
 
     ui.spacer(.y, 1);
 
-    _ = ui.push_bg(.{ .rgb = .{ 40, 40, 55 } });
-    defer _ = ui.pop_bg();
+    ui.push_bg(.{ .rgb = .{ 40, 40, 55 } });
+    defer ui.pop_bg();
     _ = widgets.collapsible_header("Details###details_sec", &app.details_open);
 
     if (app.details_open) {
-        _ = ui.push_text_padding(2);
-        defer _ = ui.pop_text_padding();
+        ui.push_text_padding(2);
+        defer ui.pop_text_padding();
         _ = widgets.label("This section can be collapsed.");
         _ = widgets.label("Click the header or press Enter.");
         ui.spacer(.y, 1);
     }
 
-    _ = ui.push_bg(.{ .rgb = .{ 40, 40, 55 } });
-    defer _ = ui.pop_bg();
+    ui.push_bg(.{ .rgb = .{ 40, 40, 55 } });
+    defer ui.pop_bg();
     _ = widgets.collapsible_header("Settings###settings_sec", &app.settings_open);
 
     if (app.settings_open) {
-        _ = ui.push_text_padding(2);
-        defer _ = ui.pop_text_padding();
+        ui.push_text_padding(2);
+        defer ui.pop_text_padding();
         _ = widgets.label("Setting 1: enabled");
         _ = widgets.label("Setting 2: disabled");
         _ = widgets.label("Setting 3: auto");
@@ -329,10 +329,10 @@ fn build_scroll_list(app: *App) !void {
         const item_str = try ui.arena_print(" Item {d}###list_item_{d}", .{ index, index });
         ui.next_width(.pct(1, 1));
         ui.next_height(.cells(1, 1));
-        _ = ui.push_bg(row_bg);
-        defer _ = ui.pop_bg();
-        _ = ui.push_color(if (is_selected) accent_color else fg_color);
-        defer _ = ui.pop_color();
+        ui.push_bg(row_bg);
+        defer ui.pop_bg();
+        ui.push_color(if (is_selected) accent_color else fg_color);
+        defer ui.pop_color();
         const item_box = ui.build_box(item_str, .{
             .clickable = true,
             .draw_background = true,
@@ -371,8 +371,8 @@ fn build_status_bar(app: *App) !void {
 
     ui.next_width(.pct(1, 0));
     ui.next_height(.pct(1, 0));
-    _ = ui.push_color(bg_color);
-    defer _ = ui.pop_color();
+    ui.push_color(bg_color);
+    defer ui.pop_color();
     _ = ui.build_box(status, .{ .draw_text = true });
 }
 

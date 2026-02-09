@@ -127,7 +127,7 @@ pub fn push_event(arena: *Arena, input: term.InputEvent) void {
 
     switch (input) {
         .key => |k| {
-            if (k.key == .codepoint and k.mods.eql(term.Modifiers.none)) {
+            if (k.key == .codepoint and k.mods == term.Modifiers.none) {
                 ev.kind = .text;
             } else {
                 ev.kind = .key_press;
@@ -255,7 +255,7 @@ fn process_focus_navigation(root: *ui.Box) void {
 
     var current_idx: ?u32 = null;
     for (focusable_keys[0..focusable_count], 0..) |k, i| {
-        if (k.eql(state.focus_hot_key)) {
+        if (k == state.focus_hot_key) {
             current_idx = @intCast(i);
             break;
         }
@@ -290,7 +290,7 @@ fn process_focus_navigation(root: *ui.Box) void {
     state.focus_active_key = Key.zero;
     current = root;
     while (current) |box| {
-        if (!box.key.is_zero() and box.key.eql(state.focus_hot_key) and box.flags.focus_active) {
+        if (!box.key.is_zero() and box.key == state.focus_hot_key and box.flags.focus_active) {
             state.focus_active_key = box.key;
             break;
         }
@@ -312,7 +312,7 @@ pub fn signal_from_box(box: *ui.Box) ui.Signal {
     const mouse_in_bounds = box.rect.contains(state.mouse_pos[0], state.mouse_pos[1]);
 
     if (mouse_in_bounds) sig.flags.mouse_over = true;
-    if (mouse_in_bounds and box.flags.clickable and box.key.eql(state.hot_box_key))
+    if (mouse_in_bounds and box.flags.clickable and box.key == state.hot_box_key)
         sig.flags.hovering = true;
 
     // -- Mouse events -------------------------------------------------------
@@ -325,7 +325,7 @@ pub fn signal_from_box(box: *ui.Box) ui.Signal {
                 if (!box.flags.clickable) continue;
                 const event_in_bounds = box.rect.contains(event.pos[0], event.pos[1]);
                 if (!event_in_bounds) continue;
-                if (!box.key.eql(state.hot_box_key)) continue;
+                if (box.key != state.hot_box_key) continue;
 
                 if (event.mouse_button == .left) {
                     sig.flags.left_pressed = true;
@@ -339,10 +339,10 @@ pub fn signal_from_box(box: *ui.Box) ui.Signal {
             .mouse_release => {
                 const is_left = event.mouse_button == .left and
                     !state.active_box_key[0].is_zero() and
-                    state.active_box_key[0].eql(box.key);
+                    state.active_box_key[0] == box.key;
                 const is_right = event.mouse_button == .right and
                     !state.active_box_key[1].is_zero() and
-                    state.active_box_key[1].eql(box.key);
+                    state.active_box_key[1] == box.key;
 
                 if (is_left) {
                     sig.flags.left_released = true;
@@ -377,7 +377,7 @@ pub fn signal_from_box(box: *ui.Box) ui.Signal {
     }
 
     // -- Keyboard interaction via focus -------------------------------------
-    if (box.flags.keyboard_clickable and state.focus_hot_key.eql(box.key)) {
+    if (box.flags.keyboard_clickable and state.focus_hot_key == box.key) {
         event_node = state.events.first;
         while (event_node) |event| : (event_node = event.next) {
             if (event.consumed) continue;
@@ -392,7 +392,7 @@ pub fn signal_from_box(box: *ui.Box) ui.Signal {
     }
 
     // -- Keyboard scroll for view_scroll boxes with focus -------------------
-    if (box.flags.view_scroll and !box.key.is_zero() and state.focus_hot_key.eql(box.key)) {
+    if (box.flags.view_scroll and !box.key.is_zero() and state.focus_hot_key == box.key) {
         const page_y: f32 = @floatFromInt(box.rect.h);
         event_node = state.events.first;
         while (event_node) |event| : (event_node = event.next) {
@@ -438,8 +438,8 @@ pub fn signal_from_box(box: *ui.Box) ui.Signal {
     }
 
     // -- Dragging -----------------------------------------------------------
-    const is_active_left = !state.active_box_key[0].is_zero() and state.active_box_key[0].eql(box.key);
-    const is_active_right = !state.active_box_key[1].is_zero() and state.active_box_key[1].eql(box.key);
+    const is_active_left = !state.active_box_key[0].is_zero() and state.active_box_key[0] == box.key;
+    const is_active_right = !state.active_box_key[1].is_zero() and state.active_box_key[1] == box.key;
     if (is_active_left or is_active_right) sig.flags.dragging = true;
 
     // -- Animate hot_t / active_t / focus_*_t -------------------------------
@@ -448,8 +448,8 @@ pub fn signal_from_box(box: *ui.Box) ui.Signal {
 
     box.hot_t = animate(box.hot_t, sig.flags.hovering, step);
     box.active_t = animate(box.active_t, is_active_left or is_active_right, step);
-    box.focus_hot_t = animate(box.focus_hot_t, state.focus_hot_key.eql(box.key), step);
-    box.focus_active_t = animate(box.focus_active_t, state.focus_active_key.eql(box.key), step);
+    box.focus_hot_t = animate(box.focus_hot_t, state.focus_hot_key == box.key, step);
+    box.focus_active_t = animate(box.focus_active_t, state.focus_active_key == box.key, step);
     box.disabled_t = animate(box.disabled_t, box.flags.disabled, step);
 
     const is_transitioning = (box.hot_t > 0.0 and box.hot_t < 1.0) or
@@ -563,7 +563,7 @@ test "tab cycles focus between three focusable boxes" {
     begin_frame();
     push_event(&arena, .{ .key = .{ .key = .tab, .mods = .{} } });
     process_events(root);
-    try testing.expect(state.focus_hot_key.eql(box_a.key));
+    try testing.expect(state.focus_hot_key == box_a.key);
 
     // Unlink and re-link to reset tree for next iteration
     // (tree_next depends on tree links being correct)
@@ -571,25 +571,25 @@ test "tab cycles focus between three focusable boxes" {
     begin_frame();
     push_event(&arena, .{ .key = .{ .key = .tab, .mods = .{} } });
     process_events(root);
-    try testing.expect(state.focus_hot_key.eql(box_b.key));
+    try testing.expect(state.focus_hot_key == box_b.key);
 
     // Tab 3: b → c
     begin_frame();
     push_event(&arena, .{ .key = .{ .key = .tab, .mods = .{} } });
     process_events(root);
-    try testing.expect(state.focus_hot_key.eql(box_c.key));
+    try testing.expect(state.focus_hot_key == box_c.key);
 
     // Tab 4: c → wraps to a
     begin_frame();
     push_event(&arena, .{ .key = .{ .key = .tab, .mods = .{} } });
     process_events(root);
-    try testing.expect(state.focus_hot_key.eql(box_a.key));
+    try testing.expect(state.focus_hot_key == box_a.key);
 
     // Shift+Tab: a → wraps to c
     begin_frame();
     push_event(&arena, .{ .key = .{ .key = .tab, .mods = .{ .shift = true } } });
     process_events(root);
-    try testing.expect(state.focus_hot_key.eql(box_c.key));
+    try testing.expect(state.focus_hot_key == box_c.key);
 }
 
 test "keyboard enter on focused box produces keyboard_pressed signal" {
@@ -609,7 +609,7 @@ test "keyboard enter on focused box produces keyboard_pressed signal" {
     begin_frame();
     push_event(&arena, .{ .key = .{ .key = .tab, .mods = .{} } });
     process_events(root);
-    try testing.expect(state.focus_hot_key.eql(button.key));
+    try testing.expect(state.focus_hot_key == button.key);
 
     // Press enter
     begin_frame();
@@ -772,13 +772,13 @@ test "mouse click transfers focus to clicked focusable box" {
     begin_frame();
     push_event(&arena, .{ .key = .{ .key = .tab, .mods = .{} } });
     process_events(root);
-    try testing.expect(state.focus_hot_key.eql(box_a.key));
+    try testing.expect(state.focus_hot_key == box_a.key);
 
     // Click on box_b → focus should move to box_b
     begin_frame();
     push_event(&arena, .{ .mouse = .{ .kind = .press, .button = .left, .col = 25, .row = 1, .mods = .{} } });
     process_events(root);
-    try testing.expect(state.focus_hot_key.eql(box_b.key));
+    try testing.expect(state.focus_hot_key == box_b.key);
 }
 
 test "right click inside a button box produces right_clicked signal" {

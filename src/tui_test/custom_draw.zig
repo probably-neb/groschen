@@ -133,8 +133,8 @@ fn draw_sparkline(box: *Box, grid: *Grid, clip: Rect) void {
 // ---------------------------------------------------------------------------
 
 fn build_ui(app: *App) void {
-    _ = ui.push_color(fg_color);
-    defer _ = ui.pop_color();
+    ui.push_color(fg_color);
+    defer ui.pop_color();
 
     build_title_bar();
     ui.spacer(.y, 1);
@@ -154,25 +154,25 @@ fn build_title_bar() void {
 
     ui.next_width(.pct(1, 0));
     ui.next_height(.pct(1, 0));
-    _ = ui.push_color(bg_color);
-    defer _ = ui.pop_color();
+    ui.push_color(bg_color);
+    defer ui.pop_color();
     _ = ui.build_box(" Custom Draw & Fastpath Demo", .{ .draw_text = true });
 }
 
 fn build_progress_section(app: *App) void {
     ui.next_width(.pct(1, 0));
-    _ = ui.push_bg(panel_bg);
-    defer _ = ui.pop_bg();
-    _ = ui.push_border_color(muted_color);
-    defer _ = ui.pop_border_color();
+    ui.push_bg(panel_bg);
+    defer ui.pop_bg();
+    ui.push_border_color(muted_color);
+    defer ui.pop_border_color();
     _ = widgets.panel_begin(" Progress Bar ##progress_panel");
     defer widgets.panel_end();
 
     ui.spacer(.y, 1);
 
     {
-        _ = ui.push_text_padding(1);
-        defer _ = ui.pop_text_padding();
+        ui.push_text_padding(1);
+        defer ui.pop_text_padding();
         const pct_label = ui.arena_print("Progress: {d:.0}%", .{app.progress * 100}) catch "Progress:";
         _ = widgets.label(pct_label);
     }
@@ -253,8 +253,8 @@ fn build_sparkline_section(app: *App) void {
     defer ui.pop_parent();
 
     {
-        _ = ui.push_text_padding(1);
-        defer _ = ui.pop_text_padding();
+        ui.push_text_padding(1);
+        defer ui.pop_text_padding();
         _ = widgets.label("Sparkline (custom_draw)");
     }
 
@@ -273,12 +273,12 @@ fn build_sparkline_section(app: *App) void {
 fn build_accel_button(label: []const u8, codepoint: u21) bool {
     ui.next_width(.text(2, 1));
     ui.next_height(.cells(3, 1));
-    _ = ui.push_bg(button_bg);
-    defer _ = ui.pop_bg();
-    _ = ui.push_color(fg_color);
-    defer _ = ui.pop_color();
-    _ = ui.push_border_color(accent_color);
-    defer _ = ui.pop_border_color();
+    ui.push_bg(button_bg);
+    defer ui.pop_bg();
+    ui.push_color(fg_color);
+    defer ui.pop_color();
+    ui.push_border_color(accent_color);
+    defer ui.pop_border_color();
     ui.next_text_padding(1);
     const box = ui.build_box(label, .{
         .clickable = true,
@@ -308,8 +308,8 @@ fn build_status_bar() void {
 
     ui.next_width(.pct(1, 0));
     ui.next_height(.pct(1, 0));
-    _ = ui.push_color(bg_color);
-    defer _ = ui.pop_color();
+    ui.push_color(bg_color);
+    defer ui.pop_color();
     _ = ui.build_box(" Tab: focus | Enter/click: activate | i/d/f/r: accelerators | q: quit", .{ .draw_text = true });
 }
 

@@ -14,7 +14,7 @@ pub const widgets = @import("widgets.zig");
 // Key
 // ---------------------------------------------------------------------------
 
-pub const Key = struct {
+pub const Key = packed struct(u64) {
     value: u64,
 
     pub const zero: Key = .{ .value = 0 };
@@ -27,10 +27,6 @@ pub const Key = struct {
 
     pub fn is_zero(key: Key) bool {
         return key.value == 0;
-    }
-
-    pub fn eql(key: Key, other: Key) bool {
-        return key.value == other.value;
     }
 
     pub fn hash(key: Key) usize {
@@ -189,7 +185,7 @@ pub const Rect = struct {
 // BoxFlags
 // ---------------------------------------------------------------------------
 
-pub const BoxFlags = packed struct {
+pub const BoxFlags = packed struct(u32) {
     clickable: bool = false,
     keyboard_clickable: bool = false,
     view_scroll: bool = false,
@@ -270,7 +266,7 @@ pub const Signal = struct {
     }
 };
 
-pub const SignalFlags = packed struct {
+pub const SignalFlags = packed struct(u16) {
     left_pressed: bool = false,
     left_released: bool = false,
     left_clicked: bool = false,
@@ -607,7 +603,7 @@ pub fn begin_build_raw(screen_w: u16, screen_h: u16, dt: f32) *Box {
     const root_box = build_box("root###", .{});
     root_box.pref_size = .{ Size.cells(@floatFromInt(screen_w), 1), Size.cells(@floatFromInt(screen_h), 1) };
     root_box.fixed_size = .{ @floatFromInt(screen_w), @floatFromInt(screen_h) };
-    _ = push_parent(root_box);
+    push_parent(root_box);
     g.root = root_box;
     return root_box;
 }
@@ -646,7 +642,7 @@ fn box_table_lookup(key: Key) ?*Box {
     const slot = box_table_slot(key);
     var node = g.box_table[slot];
     while (node) |n| {
-        if (n.key.eql(key)) return n;
+        if (n.key == key) return n;
         node = n.hash_next;
     }
     return null;
@@ -709,8 +705,8 @@ pub fn set_next_stack(comptime field: StackName, value: StackValueType(field)) v
 
 // -- Named helpers: parent --------------------------------------------------
 
-pub fn push_parent(b: *Box) ?*Box {
-    return push_stack(.parent, b);
+pub fn push_parent(b: *Box) void {
+    _ = push_stack(.parent, b);
 }
 
 pub fn pop_parent() void {
@@ -719,67 +715,67 @@ pub fn pop_parent() void {
 
 // -- Persistent push/pop helpers --------------------------------------------
 
-pub fn push_axis(v: Axis) Axis {
-    return push_stack(.child_layout_axis, v);
+pub fn push_axis(v: Axis) void {
+    _ = push_stack(.child_layout_axis, v);
 }
-pub fn pop_axis() Axis {
-    return pop_stack(.child_layout_axis);
-}
-
-pub fn push_width(v: Size) Size {
-    return push_stack(.pref_width, v);
-}
-pub fn pop_width() Size {
-    return pop_stack(.pref_width);
+pub fn pop_axis() void {
+    _ = pop_stack(.child_layout_axis);
 }
 
-pub fn push_height(v: Size) Size {
-    return push_stack(.pref_height, v);
+pub fn push_width(v: Size) void {
+    _ = push_stack(.pref_width, v);
 }
-pub fn pop_height() Size {
-    return pop_stack(.pref_height);
-}
-
-pub fn push_flags(v: BoxFlags) BoxFlags {
-    return push_stack(.flags, v);
-}
-pub fn pop_flags() BoxFlags {
-    return pop_stack(.flags);
+pub fn pop_width() void {
+    _ = pop_stack(.pref_width);
 }
 
-pub fn push_color(v: Color) Color {
-    return push_stack(.fg_color, v);
+pub fn push_height(v: Size) void {
+    _ = push_stack(.pref_height, v);
 }
-pub fn pop_color() Color {
-    return pop_stack(.fg_color);
-}
-
-pub fn push_bg(v: Color) Color {
-    return push_stack(.bg_color, v);
-}
-pub fn pop_bg() Color {
-    return pop_stack(.bg_color);
+pub fn pop_height() void {
+    _ = pop_stack(.pref_height);
 }
 
-pub fn push_border_color(v: Color) Color {
-    return push_stack(.border_color, v);
+pub fn push_flags(v: BoxFlags) void {
+    _ = push_stack(.flags, v);
 }
-pub fn pop_border_color() Color {
-    return pop_stack(.border_color);
-}
-
-pub fn push_text_padding(v: u16) u16 {
-    return push_stack(.text_padding, v);
-}
-pub fn pop_text_padding() u16 {
-    return pop_stack(.text_padding);
+pub fn pop_flags() void {
+    _ = pop_stack(.flags);
 }
 
-pub fn push_text_align(v: TextAlign) TextAlign {
-    return push_stack(.text_align, v);
+pub fn push_color(v: Color) void {
+    _ = push_stack(.fg_color, v);
 }
-pub fn pop_text_align() TextAlign {
-    return pop_stack(.text_align);
+pub fn pop_color() void {
+    _ = pop_stack(.fg_color);
+}
+
+pub fn push_bg(v: Color) void {
+    _ = push_stack(.bg_color, v);
+}
+pub fn pop_bg() void {
+    _ = pop_stack(.bg_color);
+}
+
+pub fn push_border_color(v: Color) void {
+    _ = push_stack(.border_color, v);
+}
+pub fn pop_border_color() void {
+    _ = pop_stack(.border_color);
+}
+
+pub fn push_text_padding(v: u16) void {
+    _ = push_stack(.text_padding, v);
+}
+pub fn pop_text_padding() void {
+    _ = pop_stack(.text_padding);
+}
+
+pub fn push_text_align(v: TextAlign) void {
+    _ = push_stack(.text_align, v);
+}
+pub fn pop_text_align() void {
+    _ = pop_stack(.text_align);
 }
 
 // -- Auto-pop helpers (consumed by next build_box) --------------------------
@@ -914,7 +910,7 @@ pub fn build_box(string: []const u8, extra_flags: BoxFlags) *Box {
 /// Caller must call `pop_parent()` when done adding children.
 pub fn push_parent_box(string: []const u8, extra_flags: BoxFlags) *Box {
     const b = build_box(string, extra_flags);
-    _ = push_parent(b);
+    push_parent(b);
     return b;
 }
 
@@ -1024,7 +1020,7 @@ test "build_box applies stack tops and auto-pops set_next" {
 
     init(&arena);
 
-    _ = push_bg(.{ .ansi = .red });
+    push_bg(.{ .ansi = .red });
     next_width(.cells(20, 1));
     next_height(.cells(3, 1));
 
@@ -1095,7 +1091,7 @@ test "cross-frame persistence via begin_build/end_build" {
     // Frame 2: build the same key — persistent fields should carry over
     _ = begin_build_raw(80, 24, 1.0 / 60.0);
     const b2 = build_box("persist_me##stable_key", .{ .draw_text = true });
-    try std.testing.expect(b2.key.eql(key1));
+    try std.testing.expect(b2.key == key1);
     try std.testing.expectEqual(@as(f32, 0.75), b2.hot_t);
     try std.testing.expectEqual(@as(f32, 10), b2.view_off[0]);
     try std.testing.expectEqual(@as(f32, 20), b2.view_off[1]);

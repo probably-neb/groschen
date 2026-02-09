@@ -100,7 +100,7 @@ pub fn line_edit(string: []const u8, edit_state: *Line_Edit_State) Signal {
     const after = content[edit_state.cursor..];
 
     const is_focused = !container.key.is_zero() and
-        interaction.get_focus_hot_key().eql(container.key);
+        interaction.get_focus_hot_key() == container.key;
 
     if (before.len > 0) {
         const before_str = ui.arena_dupe(before) catch "";

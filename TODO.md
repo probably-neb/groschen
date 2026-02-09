@@ -3,3 +3,4 @@
   - [ ] box + signal creation
 - [x] store scroll state on box, eliminate need for separate scroll state in the scrollable widget. Scrollable widget should just use cached tree to determine scroll offset given element heights for virtualized list behavior
 - [ ] Update scroll demo to use multi-line boxes and test horizontal scrolling as well
+- [ ] have a savepoint or pos mechanism in style stacks for saying reset to here, makes nested styling more ergonomic and avoids lots of next calls

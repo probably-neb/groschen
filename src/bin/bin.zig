@@ -3,10 +3,9 @@ const base = @import("base");
 const Arena = base.Arena;
 const term = @import("term");
 const ui = @import("ui");
-const BoxFlags = ui.BoxFlags;
-const Size = ui.Size;
 const Color = ui.Color;
 const interaction = ui.interaction;
+const plaid = @import("plaid");
 
 // ---------------------------------------------------------------------------
 // Colors
@@ -15,186 +14,58 @@ const interaction = ui.interaction;
 const bg_color: Color = .{ .rgb = .{ 20, 20, 30 } };
 const fg_color: Color = .{ .ansi = .white };
 const accent_color: Color = .{ .ansi = .cyan };
-const muted_color: Color = .{ .ansi = .bright_black };
-const panel_bg: Color = .{ .rgb = .{ 30, 30, 45 } };
-const button_bg: Color = .{ .rgb = .{ 50, 50, 70 } };
-const success_color: Color = .{ .ansi = .green };
-const warning_color: Color = .{ .ansi = .yellow };
 
 // ---------------------------------------------------------------------------
-// Flag bundles
+// UI construction
 // ---------------------------------------------------------------------------
 
-const button_flags: BoxFlags = .{
-    .clickable = true,
-    .keyboard_clickable = true,
-    .focus_hot = true,
-    .draw_background = true,
-    .draw_border = true,
-    .draw_text = true,
-    .draw_side_top = true,
-    .draw_side_bottom = true,
-    .draw_side_left = true,
-    .draw_side_right = true,
-    .draw_hot_effects = true,
-    .draw_active_effects = true,
-};
-
-const panel_flags: BoxFlags = .{
-    .draw_background = true,
-    .draw_border = true,
-    .draw_side_top = true,
-    .draw_side_bottom = true,
-    .draw_side_left = true,
-    .draw_side_right = true,
-};
-
-// ---------------------------------------------------------------------------
-// Application state
-// ---------------------------------------------------------------------------
-
-const App = struct {
-    click_count: i32 = 0,
-    message: []const u8 = "Welcome! Use Tab to navigate, Enter to activate.",
-    message_color: Color = fg_color,
-    click_label_buf: [64]u8 = undefined,
-};
-
-fn format_click_label(app: *App) []const u8 {
-    return std.fmt.bufPrint(&app.click_label_buf, "Clicked: {d}##count_btn", .{app.click_count}) catch
-        "Clicked##count_btn";
-}
-
-// ---------------------------------------------------------------------------
-// UI construction with inline signals
-// ---------------------------------------------------------------------------
-
-fn build_ui(app: *App) !void {
-    _ = ui.push_color(fg_color);
-    defer _ = ui.pop_color();
+fn build_ui(state: *plaid.State) !void {
+    ui.push_color(fg_color);
+    defer ui.pop_color();
 
     build_title_bar();
-
     ui.spacer(.y, 1);
 
-    build_main_panel(app);
+    try plaid.build_page(state);
 
+    // Fill remaining vertical space
     ui.next_width(.pct(1, 0));
     ui.next_height(.pct(1, 0));
     _ = ui.build_box("", .{});
 
-    build_status_bar();
+    build_status_bar(state);
 }
 
 fn build_title_bar() void {
     ui.next_axis(.x);
     ui.next_width(.pct(1, 1));
     ui.next_height(.cells(1, 1));
-    _ = ui.push_bg(accent_color);
-    defer _ = ui.pop_bg();
+    ui.push_bg(accent_color);
+    defer ui.pop_bg();
     _ = ui.push_parent_box("", .{ .draw_background = true });
     defer ui.pop_parent();
 
     ui.next_width(.pct(1, 0));
     ui.next_height(.pct(1, 0));
-    _ = ui.push_color(bg_color);
-    defer _ = ui.pop_color();
+    ui.push_color(bg_color);
+    defer ui.pop_color();
     _ = ui.build_box(" Groschen", .{ .draw_text = true });
 }
 
-fn build_main_panel(app: *App) void {
-    ui.next_width(.pct(1, 0));
-    ui.next_height(.children(1));
-    _ = ui.push_bg(panel_bg);
-    defer _ = ui.pop_bg();
-    _ = ui.push_border_color(muted_color);
-    defer _ = ui.pop_border_color();
-    _ = ui.push_parent_box(" Demo Panel ##main_panel", panel_flags);
-    defer ui.pop_parent();
-
-    ui.spacer(.y, 1);
-
-    build_message_row(app);
-
-    ui.spacer(.y, 1);
-
-    build_button_row(app);
-
-    ui.spacer(.y, 1);
-}
-
-fn build_message_row(app: *App) void {
-    ui.next_width(.pct(1, 0));
-    ui.next_height(.cells(1, 1));
-    _ = ui.push_color(app.message_color);
-    defer _ = ui.pop_color();
-    _ = ui.push_text_padding(1);
-    defer _ = ui.pop_text_padding();
-    _ = ui.build_box(app.message, .{ .draw_text = true });
-}
-
-fn build_button_row(app: *App) void {
-    ui.next_axis(.x);
-    ui.next_width(.pct(1, 0));
-    ui.next_height(.children(1));
-    _ = ui.push_parent_box("", .{});
-    defer ui.pop_parent();
-
-    ui.spacer(.x, 2);
-
-    if (build_button("Hello##hello_btn").clicked()) {
-        app.message = "Hello from Groschen!";
-        app.message_color = success_color;
-    }
-
-    ui.spacer(.x, 1);
-
-    const click_label = format_click_label(app);
-    if (build_button(click_label).clicked()) {
-        app.click_count += 1;
-        app.message = "Button clicked!";
-        app.message_color = accent_color;
-    }
-
-    ui.spacer(.x, 1);
-
-    if (build_button("Reset##reset_btn").clicked()) {
-        app.click_count = 0;
-        app.message = "Counter reset.";
-        app.message_color = warning_color;
-    }
-
-    ui.spacer(.x, 2);
-}
-
-fn build_status_bar() void {
+fn build_status_bar(state: *const plaid.State) void {
     ui.next_axis(.x);
     ui.next_width(.pct(1, 1));
     ui.next_height(.cells(1, 1));
-    _ = ui.push_bg(accent_color);
-    defer _ = ui.pop_bg();
+    ui.push_bg(accent_color);
+    defer ui.pop_bg();
     _ = ui.push_parent_box("", .{ .draw_background = true });
     defer ui.pop_parent();
 
     ui.next_width(.pct(1, 0));
     ui.next_height(.pct(1, 0));
-    _ = ui.push_color(bg_color);
-    defer _ = ui.pop_color();
-    _ = ui.build_box(" Tab: focus | Enter: activate | q/Esc: quit", .{ .draw_text = true });
-}
-
-fn build_button(string: []const u8) ui.Signal {
-    ui.next_width(.text(2, 1));
-    ui.next_height(.cells(3, 1));
-    _ = ui.push_bg(button_bg);
-    defer _ = ui.pop_bg();
-    _ = ui.push_color(fg_color);
-    defer _ = ui.pop_color();
-    _ = ui.push_border_color(accent_color);
-    defer _ = ui.pop_border_color();
-    ui.next_text_padding(1);
-    const box = ui.build_box(string, button_flags);
-    return interaction.signal_from_box(box);
+    ui.push_color(plaid.status_color(state));
+    defer ui.pop_color();
+    _ = ui.build_box(plaid.status_text(state), .{ .draw_text = true });
 }
 
 // ---------------------------------------------------------------------------
@@ -221,6 +92,9 @@ pub fn main() !void {
     var perm_arena = try Arena.init(.{});
     defer perm_arena.deinit();
 
+    var plaid_arena = try Arena.init(.{});
+    defer plaid_arena.deinit();
+
     var event_arena = try Arena.init(.{});
     defer event_arena.deinit();
 
@@ -230,14 +104,17 @@ pub fn main() !void {
     var t = try term.init(&perm_arena);
     defer t.deinit();
 
-    var app: App = .{};
+    var state = plaid.init_state(&plaid_arena);
+    defer plaid.deinit(&state);
+
+    plaid.load_saved_state(&state);
+
     var last_time = std.time.Instant.now() catch null;
 
     while (true) {
         const ev_scope = event_arena.scoped();
         defer ev_scope.release();
 
-        // -- Delta time -----------------------------------------------------
         const now = std.time.Instant.now() catch null;
         const dt: f32 = if (now != null and last_time != null)
             @as(f32, @floatFromInt(now.?.since(last_time.?))) / std.time.ns_per_s
@@ -245,15 +122,12 @@ pub fn main() !void {
             1.0 / 60.0;
         last_time = now;
 
-        // -- Input ----------------------------------------------------------
-        const timeout_ms: i32 = if (ui.is_animating()) 16 else 50;
+        const timeout_ms: i32 = if (ui.is_animating() or plaid.is_busy(&state)) 16 else 50;
         interaction.begin_frame();
 
         if (try t.poll_event(timeout_ms)) |ev| {
-            if (ev == .resize) {
-                // Handled by check_resize below
-            } else {
-                if (is_quit(ev)) return;
+            if (ev == .resize) {} else {
+                if (is_quit(ev)) break;
                 interaction.push_event(&event_arena, ev);
                 while (try t.poll_event(0)) |more| {
                     if (more == .resize) break;
@@ -263,16 +137,16 @@ pub fn main() !void {
             }
         }
 
-        // -- Build (check_resize, clear, process_events run inside begin_build)
+        plaid.tick(&state);
+
         const root = try ui.begin_build(&t, dt);
         root.flags.draw_background = true;
         root.bg_color = bg_color;
 
-        try build_ui(&app);
+        try build_ui(&state);
 
         ui.end_build();
 
-        // -- Draw -----------------------------------------------------------
         var grid = term.draw.Grid.from_term(&t);
         ui.render.render(&grid, root);
         try t.flush();

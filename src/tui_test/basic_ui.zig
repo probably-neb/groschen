@@ -109,8 +109,8 @@ const panel_flags: BoxFlags = .{
 fn build_ui(app: *App) !void {
     const theme = app.theme;
 
-    _ = ui.push_color(theme.fg());
-    defer _ = ui.pop_color();
+    ui.push_color(theme.fg());
+    defer ui.pop_color();
 
     build_title_bar(theme);
     ui.spacer(.y, 1);
@@ -132,8 +132,8 @@ fn build_title_bar(theme: Theme) void {
 
     ui.next_width(.pct(1, 0));
     ui.next_height(.pct(1, 0));
-    _ = ui.push_color(theme.bg());
-    defer _ = ui.pop_color();
+    ui.push_color(theme.bg());
+    defer ui.pop_color();
     _ = ui.build_box(" UI Demo", .{ .draw_text = true });
 }
 
@@ -143,10 +143,10 @@ fn build_counter_panels(app: *App, theme: Theme) !void {
 
         ui.next_width(.pct(1, 0));
         ui.next_height(.children(1));
-        _ = ui.push_bg(theme.panel_bg());
-        defer _ = ui.pop_bg();
-        _ = ui.push_border_color(theme.muted());
-        defer _ = ui.pop_border_color();
+        ui.push_bg(theme.panel_bg());
+        defer ui.pop_bg();
+        ui.push_border_color(theme.muted());
+        defer ui.pop_border_color();
         _ = ui.push_parent_box(panel_str, panel_flags);
         defer ui.pop_parent();
 
@@ -166,8 +166,8 @@ fn build_counter_row(app: *App, theme: Theme, counter_index: usize) void {
     const label_str = ui.arena_print(" {s}: ", .{counter_labels[counter_index]}) catch " : ";
     ui.next_width(.text(0, 1));
     ui.next_height(.pct(1, 0));
-    _ = ui.push_color(theme.accent());
-    defer _ = ui.pop_color();
+    ui.push_color(theme.accent());
+    defer ui.pop_color();
     _ = ui.build_box(label_str, .{ .draw_text = true });
 
     const dec_str = ui.arena_print(" - ##dec_{d}", .{counter_index}) catch " - ";
@@ -186,8 +186,8 @@ fn build_counter_row(app: *App, theme: Theme, counter_index: usize) void {
         theme.fg();
     ui.next_width(.text(0, 1));
     ui.next_height(.pct(1, 0));
-    _ = ui.push_color(val_color);
-    defer _ = ui.pop_color();
+    ui.push_color(val_color);
+    defer ui.pop_color();
     _ = ui.build_box(val_str, .{ .draw_text = true });
 
     ui.spacer(.x, 1);
@@ -241,20 +241,20 @@ fn build_status_bar(theme: Theme) void {
 
     ui.next_width(.pct(1, 0));
     ui.next_height(.pct(1, 0));
-    _ = ui.push_color(theme.bg());
-    defer _ = ui.pop_color();
+    ui.push_color(theme.bg());
+    defer ui.pop_color();
     _ = ui.build_box(" Mouse: click | Tab/Shift-Tab: focus | Enter: activate | q: quit", .{ .draw_text = true });
 }
 
 fn build_button(string: []const u8, theme: Theme) ui.Signal {
     ui.next_width(.text(2, 1));
     ui.next_height(.cells(3, 1));
-    _ = ui.push_bg(theme.button_bg());
-    defer _ = ui.pop_bg();
-    _ = ui.push_color(theme.fg());
-    defer _ = ui.pop_color();
-    _ = ui.push_border_color(theme.accent());
-    defer _ = ui.pop_border_color();
+    ui.push_bg(theme.button_bg());
+    defer ui.pop_bg();
+    ui.push_color(theme.fg());
+    defer ui.pop_color();
+    ui.push_border_color(theme.accent());
+    defer ui.pop_border_color();
     ui.next_text_padding(1);
     const box = ui.build_box(string, button_flags);
     return interaction.signal_from_box(box);
