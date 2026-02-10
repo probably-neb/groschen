@@ -123,8 +123,11 @@ pub fn main() !void {
         last_time = now;
 
         const timeout_ms: i32 = if (ui.is_animating() or plaid.is_busy(&state)) 16 else 50;
+        // TODO: should just be part of ui.begin_frame
         interaction.begin_frame();
 
+        // todo: should be part of interaction.begin_frame, or a interaction.fetch_events function
+        // if is_quit is load bearing here, can be passed to the begin_frame or fetch_events function
         if (try t.poll_event(timeout_ms)) |ev| {
             if (ev == .resize) {} else {
                 if (is_quit(ev)) break;

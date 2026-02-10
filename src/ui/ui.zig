@@ -25,6 +25,7 @@ pub const Key = packed struct(u64) {
         return .{ .value = h };
     }
 
+    // TODO: just replace with == .zero
     pub fn is_zero(key: Key) bool {
         return key.value == 0;
     }
@@ -578,6 +579,7 @@ pub fn get_build_arena() *Arena {
 /// Begin a new frame. Checks for terminal resize, clears the back buffer,
 /// processes last frame's events, swaps arenas, and creates the root box.
 pub fn begin_build(t: *term.Term, dt: f32) !*Box {
+    // could happen before layout, but this means screen size is accurate during ui construction
     _ = try t.check_resize();
     t.clear();
     return begin_build_raw(t.cols, t.rows, dt);
@@ -610,9 +612,12 @@ pub fn begin_build_raw(screen_w: u16, screen_h: u16, dt: f32) *Box {
 
 /// Finish the frame: run layout, animate floats, prune stale boxes.
 pub fn end_build() void {
+    // TODO: just assert not null
     if (g.root) |r| {
         layout_mod.layout(r, g.screen_size[0], g.screen_size[1]);
     }
+    // prune stale boxes that were not touched in this build
+    // TODO: better function name
     prune_box_table();
     g.active = false;
 }

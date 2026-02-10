@@ -139,6 +139,7 @@ pub const Cell = struct {
     }
 };
 
+// TODO: rename to .zero and put in Cell struct
 const blank_cell: Cell = .{};
 
 // ---------------------------------------------------------------------------
@@ -407,6 +408,8 @@ pub const Term = struct {
         t.cols = size.cols;
         t.rows = size.rows;
         const total = @as(usize, size.cols) * @as(usize, size.rows);
+        // TODO: why do we need to allocate both?
+        // TODO: how do these get freed on resize? or is this just a leak
         t.front = try t.arena.alloc(Cell, total);
         t.back = try t.arena.alloc(Cell, total);
         @memset(t.front, blank_cell);
@@ -429,6 +432,7 @@ pub const Term = struct {
         var cursor_col: u16 = 0;
         var cursor_valid = false;
 
+        // TODO: do we always need to emit this?
         try emit(arena, mode.cursor_hide);
 
         for (0..t.rows) |row_idx| {
@@ -455,7 +459,8 @@ pub const Term = struct {
 
                 try emit_sgr(arena, back_cell, &cur_fg, &cur_bg, &cur_attrs);
 
-                var cp_buf: [4]u8 = undefined;
+                var cp_buf: [4]u8 = .{' '} ** 4;
+                // TODO: emit missing unicode char if this function fails instead of a space
                 const cp_len = std.unicode.utf8Encode(back_cell.codepoint, &cp_buf) catch 1;
                 try emit(arena, cp_buf[0..cp_len]);
 
