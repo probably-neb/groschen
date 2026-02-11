@@ -283,3 +283,13 @@ Example:
 - **Cross-component bleed**: using `next_*` for styles intended to persist across multiple widgets.
 
 When in doubt, assume UI allocations are frame-local and scope styles tightly.
+
+## Terminal Rendering
+
+Always use `tuimg` to render `.ansi` files to PNG. Do **not** use VHS, aha, ansilove, or other tools.
+
+```sh
+tuimg -o designs/output.png --cols 80 --rows 40 designs/input.ansi
+```
+
+Key flags: `--cols` / `--rows` set terminal dimensions (default 80×24), `--fg` / `--bg` override default colors, `--font-size` sets point size (default 14).
