@@ -9,6 +9,7 @@ pub const layout_mod = @import("layout.zig");
 pub const interaction = @import("interaction.zig");
 pub const render = @import("render.zig");
 pub const widgets = @import("widgets.zig");
+pub const unicode = @import("unicode.zig");
 
 // ---------------------------------------------------------------------------
 // Key
