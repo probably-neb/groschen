@@ -984,93 +984,11 @@ fn dump_grid(grid: *const Grid, path: []const u8) !void {
     const scratch = Arena.get_scratch(&.{});
     defer scratch.release();
     const arena = scratch.arena;
-    const start_pos = arena.get_pos();
 
-    var cur_fg: Color = .default;
-    var cur_bg: Color = .default;
-    var cur_attrs: term.Attrs = .{};
-
-    // Clear screen, home cursor, hide cursor
-    try emit(arena, "\x1b[2J\x1b[H\x1b[?25l");
-
-    for (0..grid.rows) |row_idx| {
-        try emit_fmt(arena, "\x1b[{};1H", .{row_idx + 1});
-
-        for (0..grid.cols) |col_idx| {
-            const idx = row_idx * @as(usize, grid.cols) + col_idx;
-            const cell = grid.cells[idx];
-
-            if (cell.codepoint == 0) continue;
-
-            const need_reset = (cur_attrs.bold and !cell.attrs.bold) or
-                (cur_attrs.dim and !cell.attrs.dim) or
-                (cur_attrs.italic and !cell.attrs.italic) or
-                (cur_attrs.underline and !cell.attrs.underline) or
-                (cur_attrs.reverse and !cell.attrs.reverse);
-
-            if (need_reset) {
-                try emit(arena, "\x1b[0m");
-                cur_fg = .default;
-                cur_bg = .default;
-                cur_attrs = .{};
-            }
-
-            if (cell.attrs.bold and !cur_attrs.bold) try emit(arena, "\x1b[1m");
-            if (cell.attrs.dim and !cur_attrs.dim) try emit(arena, "\x1b[2m");
-            if (cell.attrs.italic and !cur_attrs.italic) try emit(arena, "\x1b[3m");
-            if (cell.attrs.underline and !cur_attrs.underline) try emit(arena, "\x1b[4m");
-            if (cell.attrs.reverse and !cur_attrs.reverse) try emit(arena, "\x1b[7m");
-            cur_attrs = cell.attrs;
-
-            if (!cell.fg.eql(cur_fg)) {
-                try emit_color(arena, cell.fg, false);
-                cur_fg = cell.fg;
-            }
-            if (!cell.bg.eql(cur_bg)) {
-                try emit_color(arena, cell.bg, true);
-                cur_bg = cell.bg;
-            }
-
-            var cp_buf: [4]u8 = .{' '} ** 4;
-            const cp_len = std.unicode.utf8Encode(cell.codepoint, &cp_buf) catch 1;
-            try emit(arena, cp_buf[0..cp_len]);
-        }
-    }
-
-    try emit(arena, "\x1b[0m\x1b[?25h");
-
-    const end_pos = arena.get_pos();
+    const bytes = try term.write_grid_ansi(arena, grid);
     const file = try std.fs.cwd().createFile(path, .{});
     defer file.close();
-    try file.writeAll(arena.memory[start_pos..end_pos]);
-}
-
-fn emit(arena: *Arena, bytes: []const u8) !void {
-    const dest = try arena.push(bytes.len);
-    @memcpy(dest, bytes);
-}
-
-fn emit_fmt(arena: *Arena, comptime fmt: []const u8, args: anytype) !void {
-    var buf: [128]u8 = undefined;
-    const s = std.fmt.bufPrint(&buf, fmt, args) catch return error.OutOfMemory;
-    try emit(arena, s);
-}
-
-fn emit_color(arena: *Arena, color: Color, is_bg: bool) !void {
-    switch (color) {
-        .default => try emit(arena, if (is_bg) "\x1b[49m" else "\x1b[39m"),
-        .ansi => |v| {
-            const n = @intFromEnum(v);
-            if (n < 8) {
-                try emit_fmt(arena, "\x1b[{}m", .{(if (is_bg) @as(u16, 40) else @as(u16, 30)) + n});
-            } else if (n < 16) {
-                try emit_fmt(arena, "\x1b[{}m", .{(if (is_bg) @as(u16, 100) else @as(u16, 90)) + n - 8});
-            } else {
-                try emit_fmt(arena, "\x1b[{};5;{}m", .{ if (is_bg) @as(u8, 48) else @as(u8, 38), n });
-            }
-        },
-        .rgb => |v| try emit_fmt(arena, "\x1b[{};2;{};{};{}m", .{ if (is_bg) @as(u8, 48) else @as(u8, 38), v[0], v[1], v[2] }),
-    }
+    try file.writeAll(bytes);
 }
 
 // ---------------------------------------------------------------------------

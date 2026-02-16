@@ -529,6 +529,45 @@ pub const Term = struct {
 // ANSI output helpers
 // ---------------------------------------------------------------------------
 
+pub fn write_grid_ansi(arena: *Arena, grid: *const draw.Grid) Arena.AllocError![]const u8 {
+    const start_pos = arena.get_pos();
+
+    var cur_fg: Color = .default;
+    var cur_bg: Color = .default;
+    var cur_attrs: Attrs = .{};
+
+    try emit(arena, "\x1b[2J");
+    try emit(arena, "\x1b[H");
+    try emit(arena, mode.cursor_hide);
+
+    var row: u16 = 0;
+    while (row < grid.rows) : (row += 1) {
+        try emit_cup(arena, row, 0);
+
+        var col: u16 = 0;
+        while (col < grid.cols) : (col += 1) {
+            const idx = @as(usize, row) * @as(usize, grid.cols) + @as(usize, col);
+            const cell = grid.cells[idx];
+
+            if (cell.codepoint == 0) continue;
+
+            try emit_sgr(arena, cell, &cur_fg, &cur_bg, &cur_attrs);
+
+            var cp_buf: [4]u8 = .{' '} ** 4;
+            const cp_len = std.unicode.utf8Encode(cell.codepoint, &cp_buf) catch 1;
+            try emit(arena, cp_buf[0..cp_len]);
+        }
+    }
+
+    if (cur_fg != .default or cur_bg != .default or cur_attrs != Attrs{}) {
+        try emit(arena, sgr.reset);
+    }
+    try emit(arena, mode.cursor_show);
+
+    const end_pos = arena.get_pos();
+    return arena.memory[start_pos..end_pos];
+}
+
 fn emit(arena: *Arena, bytes: []const u8) Arena.AllocError!void {
     const dest = try arena.push(bytes.len);
     @memcpy(dest, bytes);
