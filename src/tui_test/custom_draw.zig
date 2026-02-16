@@ -11,7 +11,7 @@ const Color = ui.Color;
 const Rect = ui.Rect;
 const Box = ui.Box;
 const interaction = ui.interaction;
-const widgets = ui.widgets;
+const widgets = @import("widgets");
 
 // ---------------------------------------------------------------------------
 // Colors

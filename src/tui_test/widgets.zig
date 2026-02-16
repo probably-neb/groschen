@@ -7,7 +7,7 @@ const BoxFlags = ui.BoxFlags;
 const Size = ui.Size;
 const Color = ui.Color;
 const interaction = ui.interaction;
-const widgets = ui.widgets;
+const widgets = @import("widgets");
 
 // ---------------------------------------------------------------------------
 // Colors

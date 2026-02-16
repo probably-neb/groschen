@@ -3,6 +3,7 @@ const std = @import("std");
 const ModuleSpec = struct {
     name: []const u8,
     path: []const u8,
+    exe_name: ?[]const u8 = null,
 };
 
 pub fn build(b: *std.Build) void {
@@ -10,10 +11,11 @@ pub fn build(b: *std.Build) void {
     const optimize = b.standardOptimizeOption(.{});
 
     const module_specs = [_]ModuleSpec{
-        .{ .name = "bin", .path = "src/bin/bin.zig" },
-        .{ .name = "tui_test", .path = "src/tui_test/tui_test.zig" },
+        .{ .name = "bin", .path = "src/bin/bin.zig", .exe_name = "groschen" },
+        .{ .name = "tui_test", .path = "src/tui_test/tui_test.zig", .exe_name = "tui-test" },
         .{ .name = "term", .path = "src/term/term.zig" },
         .{ .name = "ui", .path = "src/ui/ui.zig" },
+        .{ .name = "widgets", .path = "src/widgets/widgets.zig" },
         .{ .name = "base", .path = "src/base/base.zig" },
         .{ .name = "plaid", .path = "src/plaid/plaid.zig" },
     };
@@ -44,40 +46,28 @@ pub fn build(b: *std.Build) void {
         test_step.dependOn(&run_module_tests.step);
     }
 
-    // Main executable (bin)
-    comptime std.debug.assert(std.mem.eql(u8, module_specs[0].name, "bin"));
+    const check_step = b.step("check", "check");
+    inline for (modules, module_specs) |module, module_spec| {
+        if (module_spec.exe_name == null) continue;
 
-    const exe = b.addExecutable(.{
-        .name = "groschen",
-        .root_module = modules[0],
-    });
+        const run_name = "run:" ++ module_spec.exe_name.?;
+        const run_step = b.step(run_name, "Run the app");
 
-    b.installArtifact(exe);
-
-    const run_cmd = b.addRunArtifact(exe);
-    run_cmd.step.dependOn(b.getInstallStep());
-
-    if (b.args) |args| {
-        run_cmd.addArgs(args);
+        const exe = b.addExecutable(.{
+            .name = module_spec.exe_name.?,
+            .root_module = module,
+        });
+        const check_exe = b.addExecutable(.{
+            .name = module_spec.exe_name.?,
+            .root_module = module,
+        });
+        check_step.dependOn(&check_exe.step);
+        b.installArtifact(exe);
+        const run_cmd = b.addRunArtifact(exe);
+        if (b.args) |args| {
+            run_cmd.addArgs(args);
+        }
+        run_cmd.step.dependOn(b.getInstallStep());
+        run_step.dependOn(&run_cmd.step);
     }
-
-    const run_step = b.step("run", "Run the app");
-    run_step.dependOn(&run_cmd.step);
-
-    // TUI test harness (tui_test)
-    comptime std.debug.assert(std.mem.eql(u8, module_specs[1].name, "tui_test"));
-
-    const tui_test_exe = b.addExecutable(.{
-        .name = "tui-test",
-        .root_module = modules[1],
-    });
-
-    const testing_cmd = b.addRunArtifact(tui_test_exe);
-
-    if (b.args) |args| {
-        testing_cmd.addArgs(args);
-    }
-
-    const testing_step = b.step("testing", "Run TUI test applications");
-    testing_step.dependOn(&testing_cmd.step);
 }
