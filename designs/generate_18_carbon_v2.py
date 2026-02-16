@@ -188,9 +188,9 @@ def design_carbon_v2():
     #             row 2 = bar graph (left) + pct% (right, red text)
     o += p(32, 4, " PORTFOLIO ", fg(10, 10, 10), BOLD, bg(65, 65, 62))
 
-    block_width = 23
+    block_width = 16
     for i, (name, amount, pct_str, spark) in enumerate(PORTFOLIO):
-        col = 4 + i * (block_width + 1)
+        col = 4 + i * (block_width + 1) + 4*i
         amt_str = f"${amount:>,d}"
         o += p(34, col, name, MD, BG)
         o += p(34, col + block_width - len(amt_str), amt_str, HI, BG)

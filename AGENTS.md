@@ -10,6 +10,8 @@
 - **Use descriptive variable names.** Prefer full, readable names like `index`, `codepoint`, `count` instead of abbreviations like `i`, `cp`, `n`. Well-established short forms are fine: `col`/`row`, `w`/`h`, `fg`/`bg`, `buf`, `ptr`, `pos`. Avoid ad-hoc abbreviations like `r` for rect or `cb` for callback — if the short form isn't immediately obvious, spell it out.
 - **Prefer free functions over methods.** Especially prefer free functions that take plain old data (slices, integers, structs) as arguments rather than attaching behavior to types via methods. This keeps data structures simple and logic easy to test, compose, and reuse. Methods are acceptable for core type operations (e.g. `arena.alloc()`, `list.append()`), but default to free functions for everything else.
 - **Never name the self parameter `self`.** Use a common abbreviation of the struct name instead — e.g. `term` for `Term`, `signal` for `Signal`, `arena` for `Arena`. This applies to both methods and free functions that take a struct pointer as their first argument.
+- **Unicode literals** should be exposed as constants from `ui.unicode` with descriptive names, and referenced from those constants instead of embedding literals directly.
+- **Sequential arena writes:** when building output sequentially, write directly into the UI arena with `arena.push` and slice the result. Avoid `arena.dupe` in these cases.
 
 ## Throwaway Test Binaries
 
